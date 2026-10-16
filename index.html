@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<meta name="description" content="Tu biblioteca de juegos con nota de críticos, nota de jugadores, duración media y calidad por hora.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Calidad por hora</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>Calidad por hora</h1>
+    </div>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="Filtrar mi biblioteca..." autocomplete="off" enterkeyhint="search">
+    <select id="sort" aria-label="Ordenar por"></select>
+    <button class="primary" id="btn-add">+ Juego</button>
+    <button id="btn-menu" aria-label="Más opciones" title="Más opciones">&#8943;</button>
+  </div>
+
+  <main class="table" id="table">
+    <div class="row head" id="head">
+      <span data-sort="name">Juego</span>
+      <span data-sort="platform" class="plat">Plataforma</span>
+      <span data-sort="critic" class="num">Críticos</span>
+      <span data-sort="user" class="num">Jugadores</span>
+      <span data-sort="avg" class="num">Promedio</span>
+      <span data-sort="hours" class="num">Horas</span>
+      <span data-sort="qph" class="num">Cal./hora</span>
+    </div>
+    <div id="rows"></div>
+  </main>
+  <p class="hint" id="hint" hidden></p>
+
+</div>
+
+<!-- buscar y añadir -->
+<dialog id="dlg-add">
+  <div class="dlg-head">
+    <h2>Añadir juego</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body">
+    <input type="search" id="search" placeholder="Nombre del juego (Steam, Epic, GOG, consola, móvil...)" autocomplete="off" enterkeyhint="search" style="width:100%">
+    <div id="results" style="margin-top:12px"></div>
+  </div>
+</dialog>
+
+<!-- editar un juego de la biblioteca -->
+<dialog id="dlg-edit">
+  <div class="dlg-head">
+    <h2 id="edit-title">Editar juego</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body">
+    <label class="field"><span>Nombre</span><input type="text" id="f-name"></label>
+    <label class="field"><span>Plataforma o tienda (Steam, Epic, GOG, PS5, Switch, Android...)</span><input type="text" id="f-platform"></label>
+    <div class="grid-3">
+      <label class="field"><span>Críticos</span><input type="text" id="f-critic" inputmode="decimal" placeholder="0-10"></label>
+      <label class="field"><span>Jugadores</span><input type="text" id="f-user" inputmode="decimal" placeholder="0-10"></label>
+      <label class="field"><span>Horas</span><input type="text" id="f-hours" inputmode="decimal" placeholder="0"></label>
+    </div>
+    <p class="qph-preview" id="edit-preview"></p>
+    <p class="note" id="edit-source"></p>
+  </div>
+  <div class="dlg-foot">
+    <button class="danger spacer" id="btn-delete">Eliminar</button>
+    <button id="btn-refetch">Buscar datos</button>
+    <button class="primary" id="btn-save">Guardar</button>
+  </div>
+</dialog>
+
+<!-- menu de opciones -->
+<dialog id="dlg-menu">
+  <div class="dlg-head">
+    <h2>Opciones</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body menu-list">
+    <button id="m-key">Clave de RAWG<small id="m-key-state"></small></button>
+    <button id="m-fill">Completar datos que faltan<small id="m-fill-state"></small></button>
+    <button id="m-csv">Exportar a Excel (CSV)<small>Mismas columnas que tu steam_juegos.xlsx</small></button>
+    <button id="m-json">Guardar copia (JSON)<small>Para pasar la biblioteca a otro dispositivo</small></button>
+    <button id="m-import">Restaurar copia (JSON)<small>Sustituye la biblioteca actual</small></button>
+  </div>
+</dialog>
+
+<!-- clave de la API -->
+<dialog id="dlg-key">
+  <div class="dlg-head">
+    <h2>Clave de RAWG</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body">
+    <label class="field">
+      <span>Pega aquí tu clave</span>
+      <input type="text" id="f-key" autocomplete="off" spellcheck="false" placeholder="ej. 1a2b3c4d5e6f...">
+    </label>
+    <p class="note">
+      Es gratis: entra en <a href="https://rawg.io/apidocs" target="_blank" rel="noopener">rawg.io/apidocs</a>,
+      crea una cuenta y copia la "API key". Sirve para las notas de críticos (Metacritic), las notas de jugadores
+      y la duración media. Se guarda solo en este dispositivo.
+    </p>
+  </div>
+  <div class="dlg-foot">
+    <button class="ghost" data-close>Cancelar</button>
+    <button class="primary" id="btn-key-save">Guardar</button>
+  </div>
+</dialog>
+
+<!-- completar datos que faltan -->
+<dialog id="dlg-fill">
+  <div class="dlg-head">
+    <h2>Completar datos que faltan</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p id="fill-text" class="note" style="margin-top:0"></p>
+    <p class="note">Solo rellena los huecos vacíos: nunca sobrescribe las notas ni las horas que ya tienes.</p>
+  </div>
+  <div class="dlg-foot">
+    <button class="ghost" id="btn-fill-stop">Cerrar</button>
+    <button class="primary" id="btn-fill-start">Empezar</button>
+  </div>
+</dialog>
+
+<input type="file" id="file" accept="application/json,.json" hidden>
+<div id="toasts"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
