@@ -135,6 +135,8 @@ async function rawg(path, params) {
   try {
     res = await fetch(url);
   } catch (e) {
+    // RAWG no manda cabeceras CORS en sus errores 401, asi que una clave mal
+    // puesta llega al navegador como un fallo de red, no como un 401.
     throw new Error('SIN_RED');
   }
   if (res.status === 401 || res.status === 403) throw new Error('CLAVE_INVALIDA');
@@ -147,7 +149,7 @@ const rawgError = (e) =>
   ({
     SIN_CLAVE: 'Configura tu clave de RAWG en Opciones',
     CLAVE_INVALIDA: 'La clave de RAWG no es válida',
-    SIN_RED: 'Sin conexión',
+    SIN_RED: 'No se pudo conectar con RAWG: revisa tu clave o tu conexión',
     LIMITE: 'Demasiadas consultas: espera un momento',
   }[e.message] || 'RAWG no respondió (' + e.message + ')');
 
@@ -403,12 +405,29 @@ $('#m-key').addEventListener('click', () => {
   $('#dlg-key').showModal();
 });
 
-$('#btn-key-save').addEventListener('click', () => {
+$('#btn-key-save').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
   state.apiKey = $('#f-key').value.trim();
   localStorage.setItem(STORE_KEY + '/rawg', state.apiKey);
-  $('#dlg-key').close();
   render();
-  toast(state.apiKey ? 'Clave guardada' : 'Clave borrada');
+  if (!state.apiKey) {
+    $('#dlg-key').close();
+    toast('Clave borrada');
+    return;
+  }
+  // Se prueba al guardar: si la clave esta mal, el navegador solo ve un fallo
+  // de red, asi que mejor avisar aqui que dejar la busqueda muda.
+  btn.disabled = true;
+  btn.textContent = 'Comprobando...';
+  try {
+    await rawg('/games', { search: 'portal', page_size: 1 });
+    $('#dlg-key').close();
+    toast('Clave guardada: RAWG responde');
+  } catch (err) {
+    toast(rawgError(err));
+  }
+  btn.disabled = false;
+  btn.textContent = 'Guardar';
 });
 
 function download(name, text, type) {
