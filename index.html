@@ -62,7 +62,7 @@
     <button class="ghost" data-close aria-label="Cerrar">&times;</button>
   </div>
   <div class="dlg-body">
-    <input type="search" id="search" placeholder="Nombre del juego (Steam, Epic, GOG, consola, móvil...)" autocomplete="off" enterkeyhint="search" style="width:100%">
+    <input type="search" id="search" placeholder="Nombre del juego: Hollow Knight, Hades, Elden Ring..." autocomplete="off" enterkeyhint="search" style="width:100%">
     <div id="results" style="margin-top:12px"></div>
   </div>
 </dialog>
@@ -101,10 +101,11 @@
   </div>
   <div class="dlg-body menu-list">
     <button id="m-account">Cuenta<small id="m-account-state"></small></button>
-    <button id="m-steam">Conectar con Steam<small id="m-steam-state"></small></button>
+    <button id="m-steam">Traer mi biblioteca de Steam<small id="m-steam-state"></small></button>
     <button id="m-paste">Importar lista de juegos<small>Pega los nombres de tu biblioteca de Epic, GOG, consola o móvil</small></button>
     <button id="m-fill">Completar datos que faltan<small id="m-fill-state"></small></button>
-    <button id="m-key">Clave de RAWG<small id="m-key-state"></small></button>
+    <button id="m-key">Clave de RAWG (opcional)<small id="m-key-state"></small></button>
+    <button id="m-ejemplo">Cargar biblioteca de ejemplo<small>Para ver cómo funciona con 171 juegos ya puntuados</small></button>
     <button id="m-csv">Exportar a Excel (CSV)<small>Una fila por juego, con todas las columnas</small></button>
     <button id="m-json">Guardar copia (JSON)<small>Copia de seguridad de toda la biblioteca</small></button>
     <button id="m-import">Restaurar copia (JSON)<small>Sustituye la biblioteca actual</small></button>
@@ -130,7 +131,7 @@
 <!-- conectar steam -->
 <dialog id="dlg-steam">
   <div class="dlg-head">
-    <h2>Conectar con Steam</h2>
+    <h2>Traer mi biblioteca de Steam</h2>
     <button class="ghost" data-close aria-label="Cerrar">&times;</button>
   </div>
   <div class="dlg-body">
@@ -138,7 +139,17 @@
       <span>Tu perfil de Steam (el enlace completo o tu nombre de usuario)</span>
       <input type="text" id="f-steam" autocomplete="off" placeholder="https://steamcommunity.com/id/tunombre">
     </label>
-    <p class="note" id="steam-note">Tu perfil y los detalles del juego deben estar en <b>público</b> para que Steam deje leer la lista.</p>
+    <label class="field">
+      <span>Tu clave de Steam</span>
+      <input type="text" id="f-steam-key" autocomplete="off" spellcheck="false" placeholder="32 caracteres">
+    </label>
+    <p class="note" id="steam-note">
+      Leer la lista de juegos de una cuenta es lo único que Steam exige con clave, y debe ser
+      <b>la tuya</b>: sácala gratis en <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener">steamcommunity.com/dev/apikey</a>.
+      Se guarda solo en este dispositivo y se usa únicamente para pedir tu lista.
+      Tu perfil debe tener <b>Detalles del juego: Público</b>.
+    </p>
+    <p class="note">Buscar juegos y traer notas, duración y carátulas <b>no necesita ninguna clave</b>.</p>
     <p class="qph-preview" id="steam-progress" hidden></p>
   </div>
   <div class="dlg-foot">
@@ -182,9 +193,13 @@
       <input type="text" id="f-key" autocomplete="off" spellcheck="false" placeholder="ej. 1a2b3c4d5e6f...">
     </label>
     <p class="note">
+      <b>No hace falta para usar la app.</b> Los juegos de PC salen de Steam sin ninguna clave, con nota de
+      críticos, % de reseñas, duración y carátula. RAWG solo añade lo que Steam no tiene:
+      juegos de <b>consola y móvil</b>.
+    </p>
+    <p class="note">
       Es gratis: entra en <a href="https://rawg.io/apidocs" target="_blank" rel="noopener">rawg.io/apidocs</a>,
-      crea una cuenta y copia la "API key". Sirve para las notas de críticos (Metacritic), las notas de jugadores,
-      la duración media y las carátulas. Se guarda solo en este dispositivo.
+      crea una cuenta y copia la "API key" (32 caracteres). Se guarda solo en este dispositivo.
     </p>
   </div>
   <div class="dlg-foot">

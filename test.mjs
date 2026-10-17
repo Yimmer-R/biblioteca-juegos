@@ -1,6 +1,6 @@
 // Autochequeo: node test.mjs
 import assert from 'node:assert/strict';
-import { average, qualityPerHour, toScore10, toHours, fromRawg, fromSteam, sortGames, toCsv, stats, platformIndex, filterByPlatform, thumb, parseList } from './lib.js';
+import { average, qualityPerHour, toScore10, toHours, fromRawg, fromSteamJuego, sortGames, toCsv, stats, platformIndex, filterByPlatform, thumb, parseList } from './lib.js';
 
 // La fórmula del Excel original (fila "Hitman: Sniper Challenge": 8.0 / 7.4 / 2h -> 3.85)
 assert.equal(average(8.0, 7.4), 7.7);
@@ -42,11 +42,20 @@ assert.equal(g.store, 'Steam, Epic Games');
 // Sin tiendas, la plataforma sale de platforms/parent_platforms.
 assert.equal(fromRawg({ id: 2, name: 'Y', platforms: [{ platform: { name: 'PlayStation 5' } }] }).platform, 'PlayStation 5');
 
-// Steam: metacritic a 0-10 y % de reseñas positivas como nota de jugadores.
-assert.deepEqual(fromSteam({ metacritic: 90, positivo: 0.97, resenas: 1200, cover: 'x' }), { critic: 9, user: 9.7, cover: 'x' });
+// Ficha de Steam: metacritic a 0-10, % de reseñas como nota de jugadores y
+// la mediana de horas tal cual.
+const hades = fromSteamJuego({ appid: 1145360, nombre: 'Hades', metacritic: 93, positivo: 0.9799, resenas: 310046, horas: 23.6, anio: 2020, cover: 'x' });
+assert.equal(hades.critic, 9.3);
+assert.equal(hades.user, 9.8);
+assert.equal(hades.hours, 23.6);
+assert.equal(hades.platform, 'Steam');
+assert.equal(hades.id, 'steam-1145360');
+assert.equal(hades.year, 2020);
 // Con cuatro reseñas el porcentaje no significa nada: mejor sin nota.
-assert.equal(fromSteam({ metacritic: null, positivo: 1, resenas: 4 }).user, null);
-assert.equal(fromSteam({}).critic, null);
+assert.equal(fromSteamJuego({ appid: 1, positivo: 1, resenas: 4 }).user, null);
+assert.equal(fromSteamJuego({ appid: 1 }).critic, null);
+// Un juego sin reseñas suficientes no inventa duración.
+assert.equal(fromSteamJuego({ appid: 1, horas: null }).hours, null);
 
 // Pestañas por plataforma: las más numerosas primero y los huecos agrupados.
 const lib2 = [{ name: 'a', platform: 'Steam' }, { name: 'b', platform: 'Steam' }, { name: 'c', platform: 'GOG' }, { name: 'd', platform: null }];

@@ -26,34 +26,47 @@ todos tus dispositivos.
 
 ## De dónde salen los datos
 
-| Dato | Fuente | Detalle |
+**Buscar un juego y traer todos sus datos no necesita ninguna clave, ni tuya ni
+de nadie.** Todo sale de endpoints públicos de Steam, servidos a través del
+Worker porque Steam no manda cabeceras CORS.
+
+| Dato | Fuente | Clave |
 | --- | --- | --- |
-| Nota de críticos | Metacritic vía RAWG, o vía Steam si el juego es de Steam | Escala 0-10 |
-| Nota de jugadores | RAWG, o el **% de reseñas positivas de Steam** | Steam solo cuenta si hay 30 reseñas o más |
-| Duración media | RAWG (`playtime`) | Horas enteras; en juegos pequeños suele venir vacía |
-| Carátula | RAWG, o la imagen oficial de Steam | |
-| Tu biblioteca de Steam | Steam Web API, a través del Worker | Incluye tus horas jugadas |
+| Nota de críticos | Metacritic en la ficha de Steam | ninguna |
+| Nota de jugadores | % de reseñas positivas de Steam | ninguna (mínimo 30 reseñas) |
+| Duración | Mediana de horas jugadas por quien reseña | ninguna |
+| Carátula y año | Ficha de Steam | ninguna |
+| Consolas y móvil | RAWG | la del propio usuario, opcional |
+| Tu biblioteca de Steam | Steam Web API | **la del propio usuario** |
+
+Sobre la duración: Steam no publica "cuánto se tarda en pasárselo", así que se usa
+la **mediana de horas de las reseñas recientes**. Es sorprendentemente buena
+(Hades sale 23,6 h y lo real son ~21 h) pero tiende a pasarse en juegos largos,
+porque quien reseña suele jugar más que la media. Es un campo editable.
 
 Lo que **no** se puede hacer, y por qué:
 
 - **Epic Games y GOG no tienen API pública** para leer tu biblioteca. Solo existen
   librerías no oficiales que piden tus credenciales. Para esas plataformas usa
-  *Importar lista de juegos*.
-- **SteamDB no tiene API pública**. Las notas de jugadores de Steam llegan por el
-  endpoint oficial de reseñas, que es la misma información de base.
-- **HowLongToBeat tampoco tiene API**, así que la duración es la de RAWG. Si te
-  importa la precisión, edita las horas a mano: es un campo editable.
+  *Importar lista de juegos*: pega los nombres y la app busca el resto.
+- **La biblioteca de Steam sin clave ya no funciona**: el endpoint XML de los
+  perfiles públicos ahora redirige a la pantalla de inicio de sesión. Por eso esa
+  única función pide la clave de quien la usa.
+- **SteamDB y HowLongToBeat no tienen API pública.**
 
 ## Puesta en marcha
 
-### 1. Clave de RAWG (gratis, obligatoria para la búsqueda automática)
+### 1. Nada
 
-1. Entra en <https://rawg.io/apidocs>, crea una cuenta y copia tu *API key*.
-   Son **32 caracteres hexadecimales**: cópiala entera.
-2. En la app: **☰ → Clave de RAWG** → pegar → Guardar. La app hace una consulta de
-   prueba y te dice si responde.
+Abre la app y empieza a añadir juegos. Los de PC salen completos sin configurar
+nada: nota de críticos, nota de jugadores, duración y carátula.
 
-La clave se guarda solo en tu dispositivo.
+### 1b. Clave de RAWG (opcional, solo para consolas y móvil)
+
+1. Entra en <https://rawg.io/apidocs>, crea una cuenta y copia tu *API key*
+   (**32 caracteres hexadecimales**: cópiala entera).
+2. En la app: **☰ → Clave de RAWG** → pegar → Guardar. La app hace una consulta
+   de prueba y te dice si responde.
 
 > Si la clave está mal, RAWG contesta `401` **sin cabeceras CORS**, y el navegador
 > lo enseña como un error de red. Por eso la app comprueba la longitud y hace una
@@ -83,21 +96,22 @@ app web de Firebase. Lo que protege los datos son las reglas.
 Cada biblioteca se guarda en `bibliotecas/{uid}` y solo la puede leer su dueño.
 Gana siempre el último cambio.
 
-### 3. Conectar con Steam (opcional)
+### 3. Traer tu biblioteca de Steam (opcional)
 
-Steam no manda cabeceras CORS y su clave no puede viajar al navegador, así que hace
-falta un intermediario. Está en [`worker/`](worker/) y es un Worker de Cloudflare
-(plan gratuito, sin tarjeta):
+Es lo único que pide una clave de Steam, y es **la de quien la usa**: se saca en
+<https://steamcommunity.com/dev/apikey>, se guarda en tu propio navegador y viaja
+en la cabecera `X-Steam-Key` solo en esa petición. El Worker no guarda ninguna.
+
+El Worker (en [`worker/`](worker/)) existe porque Steam no manda cabeceras CORS.
+Se despliega en el plan gratuito de Cloudflare, sin tarjeta:
 
 ```bash
 cd worker
 npx wrangler deploy
-npx wrangler secret put STEAM_KEY
 ```
 
 Luego pon la URL que te dé Cloudflare en `STEAM_PROXY`, en [`config.js`](config.js).
-Tu clave de Steam se saca en <https://steamcommunity.com/dev/apikey> y **solo** vive
-dentro del Worker.
+No hay secretos que configurar.
 
 Tu perfil de Steam debe tener *Detalles del juego* en **Público**.
 

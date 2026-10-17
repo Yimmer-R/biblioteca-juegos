@@ -1,5 +1,5 @@
 import {
-  SORTS, dedupeKey, filterByPlatform, filterGames, fromRawg, fromSteam, parseList, platformIndex,
+  SORTS, dedupeKey, filterByPlatform, filterGames, fromRawg, fromSteamJuego, parseList, platformIndex,
   sortGames, stats, thumb, toCsv, toHours, toScore10, withDerived,
 } from './lib.js';
 import { FIREBASE, STEAM_PROXY } from './config.js';
@@ -15,6 +15,7 @@ const state = {
   platform: null,
   view: localStorage.getItem(STORE_KEY + '/vista') || 'lista',
   apiKey: localStorage.getItem(STORE_KEY + '/rawg') || '',
+  steamKey: localStorage.getItem(STORE_KEY + '/steam') || '',
   user: null,
 };
 
@@ -27,7 +28,7 @@ function load() {
   } catch (e) {
     toast('No se pudo leer la biblioteca guardada');
   }
-  return null;
+  return [];
 }
 
 let pushTimer = 0;
@@ -43,21 +44,10 @@ function save({ sync = true } = {}) {
   }
 }
 
-async function boot() {
-  const saved = load();
-  if (saved) {
-    state.games = saved;
-  } else if (!localStorage.getItem(STORE_KEY + '/seeded')) {
-    try {
-      const res = await fetch('data/seed.json');
-      state.games = await res.json();
-      localStorage.setItem(STORE_KEY + '/seeded', '1');
-      save({ sync: false });
-      toast(state.games.length + ' juegos importados de tu Excel');
-    } catch (e) {
-      state.games = [];
-    }
-  }
+function boot() {
+  // Cada persona empieza con SU biblioteca, vacia. Los juegos de ejemplo se
+  // cargan a mano desde el menu, nunca por defecto.
+  state.games = load();
   render();
   if (FIREBASE.apiKey) watchAuth(FIREBASE, onUser);
 }
@@ -91,10 +81,6 @@ const coverOf = (g) => thumb(g.cover) || (g.appid ? `https://cdn.cloudflare.stea
 
 /* ---------- render ---------- */
 
-function visibleGames() {
-  return sortGames(filterGames(filterByPlatform(state.games, state.platform), state.query), state.sort.key, state.sort.dir);
-}
-
 function render() {
   const s = stats(state.games);
   $('#stats').innerHTML = [
@@ -107,17 +93,18 @@ function render() {
     .join('');
 
   const plats = platformIndex(state.games);
-  $('#tabs').innerHTML =
-    `<button class="tab" data-plat="" aria-pressed="${!state.platform}"><b>Todas</b><span>${state.games.length}</span></button>` +
-    plats
-      .map(
-        (p) =>
-          `<button class="tab" data-plat="${esc(p.name)}" aria-pressed="${state.platform === p.name}"><b>${esc(p.name)}</b><span>${p.count}</span></button>`
-      )
-      .join('');
+  $('#tabs').innerHTML = state.games.length
+    ? `<button class="tab" data-plat="" aria-pressed="${!state.platform}"><b>Todas</b><span>${state.games.length}</span></button>` +
+      plats
+        .map(
+          (p) =>
+            `<button class="tab" data-plat="${esc(p.name)}" aria-pressed="${state.platform === p.name}"><b>${esc(p.name)}</b><span>${p.count}</span></button>`
+        )
+        .join('')
+    : '';
   $('#platform-list').innerHTML = plats.map((p) => `<option value="${esc(p.name)}">`).join('');
 
-  const visible = visibleGames();
+  const visible = sortGames(filterGames(filterByPlatform(state.games, state.platform), state.query), state.sort.key, state.sort.dir);
   const lista = state.view === 'lista';
   $('#table').hidden = !lista || !visible.length;
   $('#grid').hidden = lista || !visible.length;
@@ -156,9 +143,9 @@ function render() {
   const hint = $('#hint');
   hint.hidden = visible.length > 0;
   if (!visible.length) {
-    hint.textContent = state.games.length
+    hint.innerHTML = state.games.length
       ? 'Ningún juego coincide con ese filtro.'
-      : 'Tu biblioteca está vacía. Pulsa "+ Juego" para empezar.';
+      : 'Tu biblioteca está vacía.<br>Pulsa <b>+ Juego</b> y escribe el nombre: la app busca nota, duración y carátula sola.';
   }
 
   for (const th of document.querySelectorAll('#head span')) {
@@ -168,14 +155,16 @@ function render() {
 
   $('#m-fill-state').textContent = s.incomplete
     ? s.incomplete + ' juegos sin nota o sin duración'
-    : 'Todos tus juegos tienen datos';
-  $('#m-key-state').textContent = state.apiKey ? 'Configurada' : 'Sin configurar: la búsqueda automática no funciona';
-  $('#m-steam-state').textContent = STEAM_PROXY ? 'Trae tu biblioteca con tus horas jugadas' : 'Falta configurar el intermediario';
+    : state.games.length
+      ? 'Todos tus juegos tienen datos'
+      : 'Aún no tienes juegos';
+  $('#m-key-state').textContent = state.apiKey ? 'Configurada' : 'Opcional: añade consolas y móvil';
+  $('#m-steam-state').textContent = state.steamKey ? 'Clave configurada' : 'Necesita tu propia clave de Steam';
   $('#m-account-state').textContent = state.user
     ? 'Sincronizando como ' + state.user.email
     : FIREBASE.apiKey
       ? 'Entra con Google para verla en cualquier dispositivo'
-      : 'Falta configurar Firebase';
+      : 'Sin configurar';
   renderAccount();
 }
 
@@ -191,7 +180,38 @@ function renderAccount() {
   }
 }
 
-/* ---------- RAWG ---------- */
+/* ---------- Steam (sin claves) ---------- */
+
+async function steam(path, params, headers) {
+  if (!STEAM_PROXY) throw new Error('SIN_PROXY');
+  const url = new URL(STEAM_PROXY.replace(/\/$/, '') + path);
+  for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
+  let res;
+  try {
+    res = await fetch(url, { headers: headers || {} });
+  } catch (e) {
+    throw new Error('SIN_RED');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'ERROR_' + res.status);
+  return data;
+}
+
+const buscarSteam = (q) => steam('/buscar', { q }).then((d) => d.resultados || []);
+const fichaSteam = (appid) => steam('/juego', { appid }).then(fromSteamJuego);
+
+const steamError = (e) =>
+  ({
+    SIN_PROXY: 'Falta configurar el intermediario de Steam',
+    SIN_RED: 'No se pudo conectar con Steam',
+    falta_clave_usuario: 'Hace falta tu clave de Steam',
+    clave_invalida: 'Esa clave de Steam no es válida',
+    perfil_privado: 'Tu perfil de Steam está en privado: pon "Detalles del juego" en Público',
+    no_encontrado: 'No encuentro ese perfil de Steam',
+    consulta_corta: 'Escribe al menos 2 letras',
+  }[e.message] || 'Steam no respondió (' + e.message + ')');
+
+/* ---------- RAWG (opcional, para consolas y móvil) ---------- */
 
 async function rawg(path, params) {
   if (!state.apiKey) throw new Error('SIN_CLAVE');
@@ -214,7 +234,7 @@ async function rawg(path, params) {
 
 const rawgError = (e) =>
   ({
-    SIN_CLAVE: 'Configura tu clave de RAWG en el menú',
+    SIN_CLAVE: 'Para consolas y móvil necesitas una clave de RAWG (menú)',
     CLAVE_INVALIDA: 'La clave de RAWG no es válida',
     SIN_RED: 'No se pudo conectar con RAWG: revisa tu clave o tu conexión',
     LIMITE: 'Demasiadas consultas: espera un momento',
@@ -222,7 +242,6 @@ const rawgError = (e) =>
 
 const searchRawg = (q) => rawg('/games', { search: q, page_size: 8, search_precise: true }).then((d) => d.results || []);
 
-// El detalle trae metacritic y tiendas completos; la lista a veces no.
 async function detailRawg(id) {
   try {
     return fromRawg(await rawg('/games/' + id));
@@ -231,29 +250,19 @@ async function detailRawg(id) {
   }
 }
 
-// Busca un juego por nombre y devuelve sus datos solo si el nombre coincide.
-async function lookup(name) {
-  const hit = (await searchRawg(name))[0];
-  if (!hit) return null;
-  const data = (await detailRawg(hit.id)) || fromRawg(hit);
-  return dedupeKey(data.name) === dedupeKey(name) ? data : { ...data, dudoso: true };
-}
-
-/* ---------- Steam ---------- */
-
-async function steam(path, params) {
-  if (!STEAM_PROXY) throw new Error('SIN_PROXY');
-  const url = new URL(STEAM_PROXY.replace(/\/$/, '') + path);
-  for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
-  let res;
+// Busca un juego por nombre en Steam y, si no esta, en RAWG. Solo acepta una
+// ficha cuando el nombre coincide: vale mas un hueco vacio que un dato falso.
+async function buscarFicha(nombre) {
   try {
-    res = await fetch(url);
+    const hit = (await buscarSteam(nombre)).find((r) => dedupeKey(r.nombre) === dedupeKey(nombre));
+    if (hit) return await fichaSteam(hit.appid);
   } catch (e) {
-    throw new Error('SIN_RED');
+    /* si Steam falla, se intenta RAWG */
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'ERROR_' + res.status);
-  return data;
+  if (!state.apiKey) return null;
+  const r = (await searchRawg(nombre))[0];
+  if (!r || dedupeKey(r.name) !== dedupeKey(nombre)) return null;
+  return (await detailRawg(r.id)) || fromRawg(r);
 }
 
 /* ---------- añadir ---------- */
@@ -264,39 +273,75 @@ let searchSeq = 0;
 
 function openAdd() {
   $('#search').value = '';
-  $('#results').innerHTML = state.apiKey
-    ? '<p class="hint">Escribe el nombre de un juego.</p>'
-    : '<p class="hint">Sin clave de RAWG solo puedes añadir a mano.<br>Escribe el nombre y pulsa "Añadir a mano".</p>';
+  $('#results').innerHTML = '<p class="hint">Escribe el nombre de un juego.</p>';
   dlgAdd.showModal();
   $('#search').focus();
 }
 
+const manualBtn = (q) =>
+  `<button class="result" data-manual="1"><span class="cover"></span><span class="meta"><b>Añadir "${esc(q)}" a mano</b><small>Si no aparece arriba: consola, móvil o un juego muy nuevo</small></span></button>`;
+
+function pintaSteam(resultados) {
+  return resultados
+    .map(
+      (r) => `<button class="result" data-appid="${r.appid}">
+        <img class="cover" src="${esc(r.cover)}" alt="" loading="lazy">
+        <span class="meta"><b>${esc(r.nombre)}</b><small>Steam</small></span>
+        <span class="nums">${r.critic == null ? '' : 'crit. ' + nf(r.critic, 1)}</span>
+      </button>`
+    )
+    .join('');
+}
+
+function pintaRawg(juegos) {
+  return juegos
+    .map(
+      (g) => `<button class="result" data-rawg="${g.rawgId}">
+        ${g.cover ? `<img class="cover" src="${esc(thumb(g.cover))}" alt="" loading="lazy">` : '<span class="cover"></span>'}
+        <span class="meta"><b>${esc(g.name)}</b><small>${esc([g.year, g.platform].filter(Boolean).join(' · ')) || 'Sin plataforma'}</small></span>
+        <span class="nums">${g.critic == null ? 'sin nota' : 'crit. ' + nf(g.critic, 1)}<br>${g.hours ? nf(g.hours, 0) + ' h' : 'sin duración'}</span>
+      </button>`
+    )
+    .join('');
+}
+
 async function runSearch(q) {
   const seq = ++searchSeq;
-  const manual = `<button class="result" data-manual="1"><span class="cover"></span><span class="meta"><b>Añadir "${esc(q)}" a mano</b><small>Tú escribes las notas y las horas</small></span></button>`;
-  if (!state.apiKey) {
-    $('#results').innerHTML = manual;
-    return;
-  }
   $('#results').innerHTML = '<p class="hint">Buscando...</p>';
+
+  let steamHtml = '';
+  let aviso = '';
   try {
-    const results = await searchRawg(q);
+    const resultados = await buscarSteam(q);
     if (seq !== searchSeq) return; // una busqueda mas nueva ya respondio
-    $('#results').innerHTML =
-      results
-        .map(fromRawg)
-        .map(
-          (g) => `<button class="result" data-rawg="${g.rawgId}">
-            ${g.cover ? `<img class="cover" src="${esc(thumb(g.cover))}" alt="" loading="lazy">` : '<span class="cover"></span>'}
-            <span class="meta"><b>${esc(g.name)}</b><small>${esc([g.year, g.platform].filter(Boolean).join(' · ')) || 'Sin plataforma'}</small></span>
-            <span class="nums">${g.critic == null ? 'sin nota' : 'crit. ' + nf(g.critic, 1)}<br>${g.hours ? nf(g.hours, 0) + ' h' : 'sin duración'}</span>
-          </button>`
-        )
-        .join('') + manual;
+    steamHtml = pintaSteam(resultados);
   } catch (e) {
     if (seq !== searchSeq) return;
-    $('#results').innerHTML = `<p class="hint">${esc(rawgError(e))}</p>` + manual;
+    aviso = `<p class="hint">${esc(steamError(e))}</p>`;
   }
+
+  // RAWG solo si hace falta (Steam no lo tiene) y si esta persona tiene clave.
+  let rawgHtml = '';
+  if (!steamHtml && state.apiKey) {
+    try {
+      const juegos = (await searchRawg(q)).map(fromRawg);
+      if (seq !== searchSeq) return;
+      rawgHtml = pintaRawg(juegos);
+    } catch (e) {
+      if (seq !== searchSeq) return;
+      aviso = `<p class="hint">${esc(rawgError(e))}</p>`;
+    }
+  }
+
+  const sinNada = !steamHtml && !rawgHtml;
+  $('#results').innerHTML =
+    aviso +
+    steamHtml +
+    rawgHtml +
+    (sinNada && !state.apiKey
+      ? '<p class="hint">Sin resultados en Steam. Para juegos de consola o móvil, añade una clave de RAWG en el menú, o añádelo a mano.</p>'
+      : '') +
+    manualBtn(q);
 }
 
 $('#search').addEventListener('input', (e) => {
@@ -321,19 +366,22 @@ $('#search').addEventListener('keydown', (e) => {
 $('#results').addEventListener('click', async (e) => {
   const btn = e.target.closest('.result');
   if (!btn) return;
+
   if (btn.dataset.manual) {
     dlgAdd.close();
     openEdit({ id: 'man-' + Date.now(), name: $('#search').value.trim(), platform: null, critic: null, user: null, hours: null, cover: null, rawgId: null }, true);
     return;
   }
+
   btn.disabled = true;
-  const game = await detailRawg(Number(btn.dataset.rawg));
-  btn.disabled = false;
-  if (!game) {
-    toast('No se pudieron traer los datos de ese juego');
-    return;
+  let juego = null;
+  try {
+    juego = btn.dataset.appid ? await fichaSteam(Number(btn.dataset.appid)) : await detailRawg(Number(btn.dataset.rawg));
+  } catch (err) {
+    toast(steamError(err));
   }
-  addGame(game);
+  btn.disabled = false;
+  if (juego) addGame(juego);
 });
 
 function addGame(game) {
@@ -345,7 +393,14 @@ function addGame(game) {
   save();
   render();
   const d = withDerived(game);
-  toast(d.qph != null ? `${game.name}: ${nf(d.qph, 2)} de calidad/hora` : `${game.name} añadido: faltan datos, toca la fila`);
+  if (d.qph != null) {
+    toast(`${game.name}: ${nf(d.qph, 2)} de calidad/hora`);
+    return;
+  }
+  // Solo molesta al usuario cuando la busqueda no encontro lo necesario.
+  toast(game.name + ': faltan datos, complétalos tú');
+  dlgAdd.close();
+  openEdit(game, false);
 }
 
 /* ---------- editar ---------- */
@@ -367,13 +422,11 @@ function openEdit(game, isNew) {
   $('#f-user').value = game.user == null ? '' : String(game.user).replace('.', ',');
   $('#f-hours').value = game.hours == null ? '' : String(game.hours).replace('.', ',');
   $('#btn-delete').hidden = !!isNew;
-  $('#edit-source').textContent = [
-    game.rawgId ? 'Datos de RAWG (críticos = Metacritic).' : '',
-    game.appid ? 'Juego de Steam (' + game.appid + ').' : '',
-    game.store && game.store !== game.platform ? 'También se vende en: ' + game.store + '.' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  $('#edit-source').textContent = game.appid
+    ? 'Datos de Steam: críticos = Metacritic, jugadores = % de reseñas, horas = mediana de quienes reseñan.'
+    : game.rawgId
+      ? 'Datos de RAWG: críticos = Metacritic, horas = media de sus usuarios.'
+      : '';
   updatePreview();
   dlgEdit.showModal();
 }
@@ -435,25 +488,24 @@ $('#btn-refetch').addEventListener('click', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Buscando...';
   try {
-    const data = await lookup($('#f-name').value.trim() || editing.name);
+    const data = editing.appid ? await fichaSteam(editing.appid) : await buscarFicha($('#f-name').value.trim() || editing.name);
     if (!data) {
-      toast('RAWG no tiene ese juego');
+      toast('No encuentro ese juego: escribe los datos a mano');
     } else {
-      // Nunca borra lo que ya tenias: solo escribe lo que RAWG si conoce.
+      // Nunca borra lo que ya tenias: solo escribe lo que la fuente si conoce.
       if (data.critic != null) $('#f-critic').value = String(data.critic).replace('.', ',');
       if (data.user != null) $('#f-user').value = String(data.user).replace('.', ',');
       if (data.hours != null) $('#f-hours').value = String(data.hours).replace('.', ',');
       if (!$('#f-platform').value.trim() && data.platform) $('#f-platform').value = data.platform;
-      editing = { ...editing, rawgId: data.rawgId, cover: editing.cover || data.cover, year: data.year, store: data.store };
+      editing = { ...editing, appid: data.appid || editing.appid, rawgId: data.rawgId || editing.rawgId, cover: editing.cover || data.cover, year: editing.year || data.year };
       const cover = coverOf(editing);
       $('#edit-cover').hidden = !cover;
       if (cover) $('#edit-cover').src = cover;
-      $('#edit-source').textContent = 'Datos de RAWG para "' + data.name + '".' + (data.dudoso ? ' Ojo: el nombre no coincide exacto.' : '');
       updatePreview();
-      toast('Datos actualizados: revisa y guarda');
+      toast('Datos encontrados: revisa y guarda');
     }
   } catch (err) {
-    toast(rawgError(err));
+    toast(steamError(err));
   }
   btn.disabled = false;
   btn.textContent = 'Buscar datos';
@@ -543,8 +595,6 @@ $('#btn-key-save').addEventListener('click', async (e) => {
   if (!/^[0-9a-f]{32}$/i.test(state.apiKey)) {
     toast(`Esa clave tiene ${state.apiKey.length} caracteres y deberían ser 32: cópiala entera`);
   }
-  // Se prueba al guardar: si la clave esta mal, el navegador solo ve un fallo
-  // de red, asi que mejor avisar aqui que dejar la busqueda muda.
   btn.disabled = true;
   btn.textContent = 'Comprobando...';
   try {
@@ -587,7 +637,7 @@ $('#file').addEventListener('change', async (e) => {
   try {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data) || !data.every((g) => g && typeof g.name === 'string')) throw new Error('formato');
-    if (!confirm('¿Sustituir tus ' + state.games.length + ' juegos por los ' + data.length + ' de la copia?')) return;
+    if (state.games.length && !confirm('¿Sustituir tus ' + state.games.length + ' juegos por los ' + data.length + ' de la copia?')) return;
     state.games = data.map((g, i) => ({ id: g.id || 'imp-' + i, ...g }));
     save();
     render();
@@ -597,6 +647,25 @@ $('#file').addEventListener('change', async (e) => {
     toast('Ese archivo no es una copia válida');
   }
   e.target.value = '';
+});
+
+$('#m-ejemplo').addEventListener('click', async () => {
+  if (state.games.length && !confirm('Se añadirán los juegos de ejemplo que no tengas ya. ¿Seguir?')) return;
+  try {
+    const ejemplo = await (await fetch('data/seed.json')).json();
+    let nuevos = 0;
+    for (const g of ejemplo) {
+      if (state.games.some((x) => dedupeKey(x.name) === dedupeKey(g.name))) continue;
+      state.games.push(g);
+      nuevos++;
+    }
+    save();
+    render();
+    $('#dlg-menu').close();
+    toast(nuevos + ' juegos de ejemplo añadidos');
+  } catch (e) {
+    toast('No se pudo cargar el ejemplo');
+  }
 });
 
 /* ---------- importar pegando una lista ---------- */
@@ -642,21 +711,19 @@ $('#btn-paste-go').addEventListener('click', async (e) => {
       continue;
     }
     let datos = null;
-    if (state.apiKey) {
-      try {
-        datos = await lookup(nombre);
-      } catch (err) {
-        prog.textContent = rawgError(err);
-        break;
-      }
+    try {
+      datos = await buscarFicha(nombre);
+    } catch (err) {
+      /* un fallo puntual no debe cortar la importacion entera */
     }
-    const juego = datos && !datos.dudoso
-      ? { ...datos, platform: plataforma || datos.platform }
-      : { id: 'lista-' + Date.now() + '-' + i, name: nombre, platform: plataforma, critic: null, user: null, hours: null, cover: null, rawgId: null };
-    state.games.push(juego);
+    state.games.push(
+      datos
+        ? { ...datos, platform: plataforma || datos.platform }
+        : { id: 'lista-' + Date.now() + '-' + i, name: nombre, platform: plataforma, critic: null, user: null, hours: null, cover: null, rawgId: null }
+    );
     nuevos++;
     if (nuevos % 5 === 0) save({ sync: false });
-    if (state.apiKey) await new Promise((r) => setTimeout(r, 250)); // no castigar la API gratuita
+    await new Promise((r) => setTimeout(r, 250)); // no castigar a las APIs
   }
   importing = false;
   save();
@@ -666,14 +733,11 @@ $('#btn-paste-go').addEventListener('click', async (e) => {
   toast(nuevos + ' juegos añadidos');
 });
 
-/* ---------- conectar con Steam ---------- */
+/* ---------- traer la biblioteca de Steam ---------- */
 
 $('#m-steam').addEventListener('click', () => {
   $('#dlg-menu').close();
-  if (!STEAM_PROXY) {
-    toast('Falta configurar el intermediario de Steam');
-    return;
-  }
+  $('#f-steam-key').value = state.steamKey;
   $('#steam-progress').hidden = true;
   $('#dlg-steam').showModal();
 });
@@ -689,17 +753,25 @@ function parseSteamProfile(raw) {
 
 $('#btn-steam-go').addEventListener('click', async (e) => {
   const perfil = parseSteamProfile($('#f-steam').value);
+  const clave = $('#f-steam-key').value.trim();
+  if (!clave) {
+    toast('Pega tu clave de Steam');
+    return;
+  }
   if (!perfil) {
     toast('Pega el enlace de tu perfil de Steam');
     return;
   }
+  state.steamKey = clave;
+  localStorage.setItem(STORE_KEY + '/steam', clave);
+
   const btn = e.currentTarget;
   const prog = $('#steam-progress');
   prog.hidden = false;
   prog.textContent = 'Pidiendo tu biblioteca a Steam...';
   btn.disabled = true;
   try {
-    const data = await steam('/biblioteca', perfil);
+    const data = await steam('/biblioteca', perfil, { 'X-Steam-Key': clave });
     const juegos = data.games || [];
     let nuevos = 0;
     for (const j of juegos) {
@@ -720,17 +792,10 @@ $('#btn-steam-go').addEventListener('click', async (e) => {
     }
     save();
     render();
-    prog.textContent = `${juegos.length} juegos en tu cuenta de Steam, ${nuevos} nuevos. Ahora usa "Completar datos que faltan" para las notas y la duración.`;
+    prog.textContent = `${juegos.length} juegos en tu cuenta, ${nuevos} nuevos. Ahora usa "Completar datos que faltan" para las notas y la duración.`;
     toast(nuevos + ' juegos traídos de Steam');
   } catch (err) {
-    prog.textContent =
-      err.message === 'SIN_RED'
-        ? 'No se pudo hablar con el intermediario'
-        : err.message === 'perfil_privado'
-          ? 'Tu perfil de Steam está en privado: cambia "Detalles del juego" a Público'
-          : err.message === 'no_encontrado'
-            ? 'No encuentro ese perfil de Steam'
-            : 'Steam no respondió (' + err.message + ')';
+    prog.textContent = steamError(err);
   }
   btn.disabled = false;
 });
@@ -744,7 +809,7 @@ $('#m-fill').addEventListener('click', () => {
   $('#dlg-menu').close();
   const pending = state.games.filter(needsData);
   $('#fill-text').textContent = pending.length
-    ? pending.length + ' juegos sin nota o sin duración. Se consultará RAWG uno a uno (unos ' + Math.ceil(pending.length * 0.6) + ' segundos).'
+    ? pending.length + ' juegos sin nota o sin duración. Se buscarán uno a uno (unos ' + Math.ceil(pending.length * 0.8) + ' segundos).'
     : 'Todos tus juegos tienen nota y duración.';
   $('#btn-fill-start').disabled = !pending.length;
   $('#btn-fill-start').textContent = 'Empezar';
@@ -761,10 +826,6 @@ $('#btn-fill-start').addEventListener('click', async () => {
     filling = false;
     return;
   }
-  if (!state.apiKey) {
-    toast('Configura primero tu clave de RAWG');
-    return;
-  }
   filling = true;
   const btn = $('#btn-fill-start');
   btn.textContent = 'Detener';
@@ -774,23 +835,9 @@ $('#btn-fill-start').addEventListener('click', async () => {
   for (const game of pending) {
     if (!filling) break;
     $('#fill-text').textContent = `${done + 1} de ${pending.length}: ${game.name}`;
-    // Para un juego de Steam, Steam es mejor fuente que RAWG: su % de resenas
-    // es la nota de jugadores real del launcher. Si falla, seguimos con RAWG.
-    if (game.appid && STEAM_PROXY) {
-      try {
-        const s = fromSteam(await steam('/juego', { appid: game.appid }));
-        if (game.critic == null && s.critic != null) game.critic = s.critic;
-        if (game.user == null && s.user != null) game.user = s.user;
-        if (!game.cover && s.cover) game.cover = s.cover;
-        if (!needsData(game)) found++;
-        await new Promise((r) => setTimeout(r, 400)); // Steam limita las consultas
-      } catch (e) {
-        /* sin Steam, lo intenta RAWG */
-      }
-    }
     try {
-      const data = needsData(game) ? await lookup(game.name) : null;
-      if (data && !data.dudoso) {
+      const data = game.appid ? await fichaSteam(game.appid) : await buscarFicha(game.name);
+      if (data) {
         const patch = {};
         if (game.critic == null && data.critic != null) patch.critic = data.critic;
         if (game.user == null && data.user != null) patch.user = data.user;
@@ -798,17 +845,17 @@ $('#btn-fill-start').addEventListener('click', async () => {
         if (!game.cover && data.cover) patch.cover = data.cover;
         if (!game.platform && data.platform) patch.platform = data.platform;
         if (Object.keys(patch).length) {
-          Object.assign(game, patch, { rawgId: data.rawgId, year: game.year || data.year, store: game.store || data.store });
+          Object.assign(game, patch, { appid: game.appid || data.appid, rawgId: game.rawgId || data.rawgId, year: game.year || data.year });
           found++;
         }
       }
     } catch (e) {
-      $('#fill-text').textContent = rawgError(e);
+      $('#fill-text').textContent = steamError(e);
       break;
     }
     done++;
     if (done % 10 === 0) save({ sync: false });
-    await new Promise((r) => setTimeout(r, 250)); // no castigar la API gratuita
+    await new Promise((r) => setTimeout(r, 400)); // Steam limita las consultas
   }
   filling = false;
   save();
@@ -824,7 +871,7 @@ $('#btn-fill-start').addEventListener('click', async () => {
 function openAccount() {
   const body = $('#account-body');
   if (!FIREBASE.apiKey) {
-    body.innerHTML = '<p class="hint" style="padding:8px 0">Esta copia de la app todavía no tiene Firebase configurado, así que no hay sincronización.</p>';
+    body.innerHTML = '<p class="hint" style="padding:8px 0">Esta copia de la app no tiene sincronización configurada.</p>';
     $('#btn-signin').hidden = true;
     $('#btn-signout').hidden = true;
   } else if (state.user) {
@@ -833,7 +880,7 @@ function openAccount() {
     $('#btn-signin').hidden = true;
     $('#btn-signout').hidden = false;
   } else {
-    body.innerHTML = '<p class="hint" style="padding:8px 0">Entra con tu cuenta de Google para tener la misma biblioteca en el móvil y en el ordenador.</p>';
+    body.innerHTML = '<p class="hint" style="padding:8px 0">Entra con tu cuenta de Google para tener la misma biblioteca en el móvil y en el ordenador. Cada persona ve solo la suya.</p>';
     $('#account-note').textContent = 'Solo se guardan tus juegos y tu correo. Nadie más puede leerlos.';
     $('#btn-signin').hidden = false;
     $('#btn-signout').hidden = true;
@@ -878,11 +925,13 @@ async function onUser(user) {
     const remoto = await pullOnce(user.uid);
     if (!remoto) {
       await push(user.uid, state.games);
-      toast('Biblioteca subida a tu cuenta');
+      if (state.games.length) toast('Biblioteca subida a tu cuenta');
     } else if (JSON.stringify(remoto) !== JSON.stringify(state.games)) {
-      const usarNube = confirm(
-        `Tu cuenta tiene ${remoto.length} juegos guardados y este dispositivo tiene ${state.games.length}.\n\nAceptar = usar los de tu cuenta.\nCancelar = subir los de este dispositivo.`
-      );
+      const usarNube =
+        !state.games.length ||
+        confirm(
+          `Tu cuenta tiene ${remoto.length} juegos guardados y este dispositivo tiene ${state.games.length}.\n\nAceptar = usar los de tu cuenta.\nCancelar = subir los de este dispositivo.`
+        );
       if (usarNube) {
         state.games = remoto;
         save({ sync: false });

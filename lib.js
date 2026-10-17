@@ -58,13 +58,21 @@ export function fromRawg(g) {
   };
 }
 
-// Steam: metacritic 0-100 y el % de resenas positivas, que es la nota de
-// jugadores de verdad del launcher. Menos de 30 resenas no dice nada.
-export function fromSteam(d) {
+// Ficha de Steam, sin ninguna clave: metacritic 0-100, el % de resenas
+// positivas (la nota de jugadores del propio launcher) y la mediana de horas
+// jugadas por quien resena. Menos de 30 resenas no dice nada.
+export function fromSteamJuego(d) {
   return {
+    id: 'steam-' + d.appid,
+    appid: d.appid,
+    name: d.nombre,
+    platform: 'Steam',
+    year: d.anio || null,
     critic: d.metacritic ? round2(d.metacritic / 10) : null,
     user: d.positivo != null && d.resenas >= 30 ? round2(d.positivo * 10) : null,
+    hours: d.horas || null,
     cover: d.cover || null,
+    rawgId: null,
   };
 }
 
