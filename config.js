@@ -14,4 +14,4 @@ export const FIREBASE = {
 
 // URL del Worker de Cloudflare que lee tu biblioteca de Steam.
 // Ejemplo: https://steam-proxy.tunombre.workers.dev
-export const STEAM_PROXY = '';
+export const STEAM_PROXY = 'https://steam-proxy.yimmer-r.workers.dev';
