@@ -59,14 +59,26 @@ La clave se guarda solo en tu dispositivo.
 > lo enseña como un error de red. Por eso la app comprueba la longitud y hace una
 > consulta de prueba al guardarla.
 
-### 2. Sincronización con Google (opcional)
+### 2. Sincronización con Google
 
-1. Crea un proyecto en <https://console.firebase.google.com>.
-2. **Authentication → Google → Habilitar**, y añade tu dominio en
-   *Authentication → Settings → Dominios autorizados*.
-3. **Firestore Database → Crear**, y pega el contenido de [`firestore.rules`](firestore.rules)
-   en la pestaña *Reglas*.
-4. Registra una app **Web** y copia el `firebaseConfig` en [`config.js`](config.js).
+Ya está montado sobre el proyecto `calidad-por-hora-d22290`: solo hay que pulsar
+**Entrar** en la app. Para reproducirlo en otro proyecto:
+
+```bash
+firebase login
+firebase projects:create <id> --display-name "Calidad por hora"
+firebase apps:create WEB "web" --project <id>
+firebase apps:sdkconfig WEB <appId> --project <id>   # -> config.js
+firebase deploy --only firestore:rules --project <id>  # crea la BD y publica las reglas
+```
+
+Dos cosas **no** se pueden hacer por CLI y hay que hacerlas en la consola:
+activar el proveedor **Google** en *Authentication* (la API pide un `client_id`
+que solo autocrea la consola) e inicializar Auth (por API exige facturación).
+El dominio autorizado sí se puede añadir después por API.
+
+La `apiKey` de `config.js` es pública por diseño: viaja al navegador en cualquier
+app web de Firebase. Lo que protege los datos son las reglas.
 
 Cada biblioteca se guarda en `bibliotecas/{uid}` y solo la puede leer su dueño.
 Gana siempre el último cambio.
