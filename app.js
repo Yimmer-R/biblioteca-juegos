@@ -3,7 +3,7 @@ import {
   sortGames, stats, thumb, toCsv, toHours, toScore10, withDerived,
 } from './lib.js';
 import { FIREBASE, STEAM_PROXY } from './config.js';
-import { signIn, signOut, watchAuth, pullOnce, push, watchRemote } from './sync.js';
+import { signIn, signOut, watchAuth, pullOnce, pullAnterior, push, watchRemote } from './sync.js';
 
 const STORE_KEY = 'calidad-por-hora/v1';
 const $ = (sel) => document.querySelector(sel);
@@ -630,6 +630,29 @@ $('#m-json').addEventListener('click', () => {
 });
 
 $('#m-import').addEventListener('click', () => $('#file').click());
+
+$('#m-anterior').addEventListener('click', async () => {
+  if (!state.user) {
+    toast('Entra con Google para ver tu copia anterior');
+    return;
+  }
+  try {
+    const previa = await pullAnterior(state.user.uid);
+    if (!previa) {
+      toast('No hay ninguna versión anterior guardada');
+      return;
+    }
+    const cuando = previa.actualizado ? new Date(previa.actualizado).toLocaleString('es-ES') : 'antes del último cambio';
+    if (!confirm(`La copia anterior tiene ${previa.games.length} juegos (${cuando}).\n\n¿Recuperarla y sustituir los ${state.games.length} de ahora?`)) return;
+    state.games = previa.games;
+    save();
+    render();
+    $('#dlg-menu').close();
+    toast(state.games.length + ' juegos recuperados');
+  } catch (e) {
+    toast('No se pudo leer la copia anterior');
+  }
+});
 
 $('#file').addEventListener('change', async (e) => {
   const file = e.target.files[0];

@@ -70,10 +70,38 @@ export async function pullOnce(uid) {
 }
 
 export async function push(uid, games) {
-  const [{ doc, setDoc }, base] = await Promise.all([import(CDN + 'firebase-firestore.js'), db()]);
+  const [{ doc, getDoc, setDoc }, base] = await Promise.all([import(CDN + 'firebase-firestore.js'), db()]);
   const payload = JSON.stringify(games);
   if (payload.length > MAX_BYTES) throw new Error('la biblioteca es demasiado grande para sincronizar');
-  await setDoc(doc(base, 'bibliotecas', uid), { games: JSON.parse(payload), actualizado: Date.now() });
+
+  const ref = doc(base, 'bibliotecas', uid);
+
+  // Red de seguridad: guarda la version que habia antes de pisarla. Un
+  // dispositivo con menos juegos puede borrarle la biblioteca al resto, y sin
+  // esto no habria forma de recuperarla.
+  let anterior = null;
+  try {
+    const previo = await getDoc(ref);
+    if (previo.exists() && Array.isArray(previo.data().games)) {
+      const antes = previo.data().games;
+      // Solo cabe si las dos versiones juntas no revientan el documento.
+      if (antes.length && JSON.stringify(antes).length + payload.length < MAX_BYTES) {
+        anterior = { games: antes, actualizado: previo.data().actualizado || null };
+      }
+    }
+  } catch (e) {
+    /* si no se puede leer, se sigue: perder la copia es mejor que no guardar */
+  }
+
+  await setDoc(ref, { games: JSON.parse(payload), actualizado: Date.now(), ...(anterior ? { anterior } : {}) });
+}
+
+// Devuelve la version guardada justo antes del ultimo cambio, si la hay.
+export async function pullAnterior(uid) {
+  const [{ doc, getDoc }, base] = await Promise.all([import(CDN + 'firebase-firestore.js'), db()]);
+  const snap = await getDoc(doc(base, 'bibliotecas', uid));
+  const a = snap.exists() ? snap.data().anterior : null;
+  return a && Array.isArray(a.games) ? a : null;
 }
 
 export function watchRemote(uid, cb) {
