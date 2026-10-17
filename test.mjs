@@ -1,6 +1,6 @@
 // Autochequeo: node test.mjs
 import assert from 'node:assert/strict';
-import { average, qualityPerHour, toScore10, toHours, fromRawg, fromSteamJuego, estimaHoras, sortGames, toCsv, stats, platformIndex, filterByPlatform, thumb, parseList } from './lib.js';
+import { average, qualityPerHour, toScore10, toHours, fromRawg, fromSteamJuego, estimaHoras, eligeHoras, sortGames, toCsv, stats, platformIndex, filterByPlatform, thumb, parseList } from './lib.js';
 
 // La fórmula del Excel original (fila "Hitman: Sniper Challenge": 8.0 / 7.4 / 2h -> 3.85)
 assert.equal(average(8.0, 7.4), 7.7);
@@ -41,6 +41,14 @@ assert.equal(g.platform, 'Steam');
 assert.equal(g.store, 'Steam, Epic Games');
 // Sin tiendas, la plataforma sale de platforms/parent_platforms.
 assert.equal(fromRawg({ id: 2, name: 'Y', platforms: [{ platform: { name: 'PlayStation 5' } }] }).platform, 'PlayStation 5');
+
+// La duración medida de IGDB manda sobre la estimación de Steam.
+assert.deepEqual(eligeHoras({ normal: 21 }, 38.5), { horas: 21, fuenteHoras: 'igdb' });
+// Si IGDB no tiene ese juego, queda la estimación, marcada como tal.
+assert.deepEqual(eligeHoras(null, 38.5), { horas: 38.5, fuenteHoras: 'estimacion' });
+assert.deepEqual(eligeHoras({ normal: null, completo: 90 }, 38.5), { horas: 38.5, fuenteHoras: 'estimacion' });
+// Sin nada, hueco vacío: nunca un número inventado.
+assert.deepEqual(eligeHoras(null, null), { horas: null, fuenteHoras: null });
 
 // Duración estimada: percentil 35 de las horas de quien reseña.
 // 20 valores de 1 a 20 horas -> indice redondeado 0,35*19 = 7 -> 8 horas.

@@ -69,6 +69,15 @@ export function fromRawg(g) {
 // porque quien se molesta en resenar suele jugar mucho mas que la media.
 export const PERCENTIL_HORAS = 0.35;
 
+// La duracion buena es la de IGDB ("normally" = pasarselo a ritmo normal), que
+// es un dato medido. La estimacion de Steam solo entra cuando IGDB no tiene ese
+// juego, que pasa a menudo con lo pequeno o lo recien salido.
+export function eligeHoras(igdb, estimacion) {
+  if (igdb && igdb.normal) return { horas: igdb.normal, fuenteHoras: 'igdb' };
+  if (estimacion) return { horas: estimacion, fuenteHoras: 'estimacion' };
+  return { horas: null, fuenteHoras: null };
+}
+
 export function estimaHoras(minutos) {
   const xs = (minutos || [])
     .filter((m) => m > 0)
@@ -92,6 +101,7 @@ export function fromSteamJuego(d) {
     critic: d.metacritic ? round2(d.metacritic / 10) : null,
     user: d.positivo != null && d.resenas >= 30 ? round2(d.positivo * 10) : null,
     hours: d.horas || null,
+    fuenteHoras: d.fuenteHoras || null,
     cover: d.cover || null,
     rawgId: null,
   };

@@ -423,7 +423,10 @@ function openEdit(game, isNew) {
   $('#f-hours').value = game.hours == null ? '' : String(game.hours).replace('.', ',');
   $('#btn-delete').hidden = !!isNew;
   $('#edit-source').textContent = game.appid
-    ? 'Datos de Steam: críticos = Metacritic, jugadores = % de reseñas, horas = mediana de quienes reseñan.'
+    ? 'Steam: críticos = Metacritic, jugadores = % de reseñas. Horas: ' +
+      (game.fuenteHoras === 'igdb'
+        ? 'duración medida (IGDB), lo que se tarda a ritmo normal.'
+        : 'estimación a partir de quienes reseñan, puede desviarse; corrígela si te importa.')
     : game.rawgId
       ? 'Datos de RAWG: críticos = Metacritic, horas = media de sus usuarios.'
       : '';
