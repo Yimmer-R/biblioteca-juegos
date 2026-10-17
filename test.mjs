@@ -1,6 +1,6 @@
 // Autochequeo: node test.mjs
 import assert from 'node:assert/strict';
-import { average, qualityPerHour, toScore10, toHours, fromRawg, fromSteamJuego, sortGames, toCsv, stats, platformIndex, filterByPlatform, thumb, parseList } from './lib.js';
+import { average, qualityPerHour, toScore10, toHours, fromRawg, fromSteamJuego, estimaHoras, sortGames, toCsv, stats, platformIndex, filterByPlatform, thumb, parseList } from './lib.js';
 
 // La fórmula del Excel original (fila "Hitman: Sniper Challenge": 8.0 / 7.4 / 2h -> 3.85)
 assert.equal(average(8.0, 7.4), 7.7);
@@ -41,6 +41,16 @@ assert.equal(g.platform, 'Steam');
 assert.equal(g.store, 'Steam, Epic Games');
 // Sin tiendas, la plataforma sale de platforms/parent_platforms.
 assert.equal(fromRawg({ id: 2, name: 'Y', platforms: [{ platform: { name: 'PlayStation 5' } }] }).platform, 'PlayStation 5');
+
+// Duración estimada: percentil 35 de las horas de quien reseña.
+// 20 valores de 1 a 20 horas -> indice redondeado 0,35*19 = 7 -> 8 horas.
+assert.equal(estimaHoras(Array.from({length:20}, (_, i) => (i + 1) * 60)), 8);
+// Las horas vienen en minutos y los ceros no cuentan.
+assert.equal(estimaHoras([0, 0, 60, 120]), null);
+// Muestra pequeña = ruido: mejor vacío que un número inventado.
+assert.equal(estimaHoras([60, 120, 180]), null);
+assert.equal(estimaHoras([]), null);
+assert.equal(estimaHoras(null), null);
 
 // Ficha de Steam: metacritic a 0-10, % de reseñas como nota de jugadores y
 // la mediana de horas tal cual.

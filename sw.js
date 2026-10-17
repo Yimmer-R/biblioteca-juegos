@@ -1,6 +1,6 @@
 // Cache de la carcasa para que la app abra sin conexion.
 // Red primero: si hay internet siempre ves la ultima version; si no, tira del cache.
-const CACHE = 'calidad-por-hora-v5';
+const CACHE = 'calidad-por-hora-v6';
 const SHELL = ['.', 'index.html', 'styles.css', 'app.js', 'lib.js', 'sync.js', 'config.js', 'manifest.webmanifest', 'data/seed.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {

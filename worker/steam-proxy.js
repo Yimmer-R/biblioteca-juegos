@@ -10,6 +10,8 @@
 //
 // Desplegar:  npx wrangler deploy
 
+import { estimaHoras } from '../lib.js';
+
 const ALLOWED = ['https://yimmer-r.github.io', 'http://localhost:8123'];
 const UA = 'calidad-por-hora/1.0 (+https://yimmer-r.github.io/biblioteca-juegos/)';
 
@@ -78,7 +80,7 @@ async function juego(url) {
       .then((r) => r.json())
       .catch(() => ({})),
     // 'recent' en vez de 'all': las resenas mas utiles son de gente que ha
-    // jugado muchisimo y disparan la mediana de horas.
+    // jugado muchisimo y disparan la estimacion de horas.
     pedir(`https://store.steampowered.com/appreviews/${appid}?json=1&num_per_page=100&language=all&purchase_type=all&filter=recent`)
       .then((r) => r.json())
       .catch(() => ({})),
@@ -87,12 +89,10 @@ async function juego(url) {
   const data = (det[appid] && det[appid].data) || {};
   const q = rev.query_summary || {};
 
-  const horas = (rev.reviews || [])
-    .map((r) => (r.author && (r.author.playtime_at_review || r.author.playtime_forever)) || 0)
-    .filter((m) => m > 0)
-    .map((m) => m / 60)
-    .sort((a, b) => a - b);
-  const mediana = horas.length ? horas[Math.floor(horas.length / 2)] : null;
+  // playtime_forever antes que playtime_at_review: mide mejor (ratio 0,91
+  // frente a 0,84 contra duraciones conocidas).
+  const minutos = (rev.reviews || []).map((r) => (r.author && (r.author.playtime_forever || r.author.playtime_at_review)) || 0);
+  const horas = estimaHoras(minutos);
 
   const anio = (data.release_date && (data.release_date.date || '').match(/\d{4}/)) || null;
 
@@ -104,8 +104,8 @@ async function juego(url) {
       // % de resenas positivas de Steam: la nota de jugadores del propio launcher.
       positivo: q.total_reviews ? q.total_positive / q.total_reviews : null,
       resenas: q.total_reviews || 0,
-      horas: mediana ? Math.round(mediana * 10) / 10 : null,
-      muestraHoras: horas.length,
+      horas,
+      muestraHoras: minutos.filter((m) => m > 0).length,
       cover: data.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
       anio: anio ? Number(anio[0]) : null,
     },

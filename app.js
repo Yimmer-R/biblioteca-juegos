@@ -752,6 +752,10 @@ function parseSteamProfile(raw) {
 }
 
 $('#btn-steam-go').addEventListener('click', async (e) => {
+  if (filling) {
+    filling = false; // el boton hace de "Detener" mientras rellena
+    return;
+  }
   const perfil = parseSteamProfile($('#f-steam').value);
   const clave = $('#f-steam-key').value.trim();
   if (!clave) {
@@ -773,29 +777,39 @@ $('#btn-steam-go').addEventListener('click', async (e) => {
   try {
     const data = await steam('/biblioteca', perfil, { 'X-Steam-Key': clave });
     const juegos = data.games || [];
-    let nuevos = 0;
+    const nuevos = [];
     for (const j of juegos) {
       if (state.games.some((g) => g.appid === j.appid || dedupeKey(g.name) === dedupeKey(j.name))) continue;
-      state.games.push({
-        id: 'steam-' + j.appid,
-        appid: j.appid,
-        name: j.name,
-        platform: 'Steam',
-        critic: null,
-        user: null,
-        hours: null,
-        jugadas: j.playtime_forever ? Math.round((j.playtime_forever / 60) * 10) / 10 : null,
-        cover: null,
-        rawgId: null,
-      });
-      nuevos++;
+      // Las horas que ha jugado esta persona NO son la duracion del juego:
+      // la duracion se busca abajo, igual que para cualquier otro juego.
+      const juego = { id: 'steam-' + j.appid, appid: j.appid, name: j.name, platform: 'Steam', critic: null, user: null, hours: null, cover: null, rawgId: null };
+      state.games.push(juego);
+      nuevos.push(juego);
     }
     save();
     render();
-    prog.textContent = `${juegos.length} juegos en tu cuenta, ${nuevos} nuevos. Ahora usa "Completar datos que faltan" para las notas y la duración.`;
-    toast(nuevos + ' juegos traídos de Steam');
+    toast(nuevos.length + ' juegos traídos de Steam');
+
+    if (!nuevos.length) {
+      prog.textContent = `${juegos.length} juegos en tu cuenta y ya los tenías todos.`;
+      btn.disabled = false;
+      return;
+    }
+
+    // Sin esto el usuario se queda con una lista de nombres vacios.
+    btn.textContent = 'Detener';
+    btn.disabled = false;
+    filling = true;
+    const { encontrados } = await completarDatos(nuevos, (t) => {
+      prog.textContent = 'Buscando notas y duración... ' + t;
+    });
+    filling = false;
+    btn.textContent = 'Traer mi biblioteca';
+    prog.textContent = `Listo: ${nuevos.length} juegos nuevos, ${encontrados} con nota y duración.`;
   } catch (err) {
     prog.textContent = steamError(err);
+    btn.disabled = false;
+    return;
   }
   btn.disabled = false;
 });
@@ -804,6 +818,50 @@ $('#btn-steam-go').addEventListener('click', async (e) => {
 
 let filling = false;
 const needsData = (g) => g.critic == null || g.user == null || !g.hours;
+
+// Rellena los huecos de una lista de juegos. Lo usan el boton del menu y, sin
+// que haya que pedirlo, la importacion de Steam: traer 200 juegos vacios y
+// dejarlos ahi no le sirve a nadie.
+async function completarDatos(pendientes, progreso) {
+  let hechos = 0;
+  let encontrados = 0;
+  for (const game of pendientes) {
+    if (!filling) break;
+    progreso(`${hechos + 1} de ${pendientes.length}: ${game.name}`);
+    try {
+      const data = game.appid ? await fichaSteam(game.appid) : await buscarFicha(game.name);
+      if (data) {
+        const patch = {};
+        if (game.critic == null && data.critic != null) patch.critic = data.critic;
+        if (game.user == null && data.user != null) patch.user = data.user;
+        if (!game.hours && data.hours) patch.hours = data.hours;
+        if (!game.cover && data.cover) patch.cover = data.cover;
+        if (!game.platform && data.platform) patch.platform = data.platform;
+        if (Object.keys(patch).length) {
+          Object.assign(game, patch, { appid: game.appid || data.appid, rawgId: game.rawgId || data.rawgId, year: game.year || data.year });
+          encontrados++;
+        }
+      }
+    } catch (e) {
+      // Un juego que falla no corta la tanda: Steam devuelve fichas vacias a menudo.
+      if (e.message === 'SIN_RED' || e.message === 'SIN_PROXY') {
+        progreso(steamError(e));
+        break;
+      }
+    }
+    hechos++;
+    if (hechos % 10 === 0) {
+      save({ sync: false });
+      render();
+    }
+    // Steam corta a las ~200 consultas por 5 minutos, y ese limite es por IP
+    // del intermediario: lo comparten todos los que usen la app.
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  save();
+  render();
+  return { hechos, encontrados };
+}
 
 $('#m-fill').addEventListener('click', () => {
   $('#dlg-menu').close();
@@ -830,40 +888,14 @@ $('#btn-fill-start').addEventListener('click', async () => {
   const btn = $('#btn-fill-start');
   btn.textContent = 'Detener';
   const pending = state.games.filter(needsData);
-  let done = 0;
-  let found = 0;
-  for (const game of pending) {
-    if (!filling) break;
-    $('#fill-text').textContent = `${done + 1} de ${pending.length}: ${game.name}`;
-    try {
-      const data = game.appid ? await fichaSteam(game.appid) : await buscarFicha(game.name);
-      if (data) {
-        const patch = {};
-        if (game.critic == null && data.critic != null) patch.critic = data.critic;
-        if (game.user == null && data.user != null) patch.user = data.user;
-        if (!game.hours && data.hours) patch.hours = data.hours;
-        if (!game.cover && data.cover) patch.cover = data.cover;
-        if (!game.platform && data.platform) patch.platform = data.platform;
-        if (Object.keys(patch).length) {
-          Object.assign(game, patch, { appid: game.appid || data.appid, rawgId: game.rawgId || data.rawgId, year: game.year || data.year });
-          found++;
-        }
-      }
-    } catch (e) {
-      $('#fill-text').textContent = steamError(e);
-      break;
-    }
-    done++;
-    if (done % 10 === 0) save({ sync: false });
-    await new Promise((r) => setTimeout(r, 400)); // Steam limita las consultas
-  }
+  const { encontrados } = await completarDatos(pending, (t) => {
+    $('#fill-text').textContent = t;
+  });
   filling = false;
-  save();
-  render();
   btn.textContent = 'Empezar';
   btn.disabled = !state.games.some(needsData);
-  $('#fill-text').textContent = `Listo: ${found} de ${pending.length} juegos completados.`;
-  toast(found + ' juegos completados');
+  $('#fill-text').textContent = `Listo: ${encontrados} de ${pending.length} juegos completados.`;
+  toast(encontrados + ' juegos completados');
 });
 
 /* ---------- cuenta y sincronizacion ---------- */
