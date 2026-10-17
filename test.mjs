@@ -1,6 +1,6 @@
 // Autochequeo: node test.mjs
 import assert from 'node:assert/strict';
-import { average, qualityPerHour, toScore10, toHours, fromRawg, sortGames, toCsv, stats } from './lib.js';
+import { average, qualityPerHour, toScore10, toHours, fromRawg, fromSteam, sortGames, toCsv, stats, platformIndex, filterByPlatform, thumb, parseList } from './lib.js';
 
 // La fórmula del Excel original (fila "Hitman: Sniper Challenge": 8.0 / 7.4 / 2h -> 3.85)
 assert.equal(average(8.0, 7.4), 7.7);
@@ -36,10 +36,36 @@ assert.equal(g.critic, 9.2);
 assert.equal(g.user, 8.94);
 assert.equal(g.hours, 74);
 assert.equal(g.year, 2013);
-assert.equal(g.platform, 'PC, PlayStation');
+// La plataforma es una sola (donde lo tienes), no la lista de donde se vende.
+assert.equal(g.platform, 'Steam');
 assert.equal(g.store, 'Steam, Epic Games');
-// Si RAWG no manda parent_platforms, tira de platforms.
+// Sin tiendas, la plataforma sale de platforms/parent_platforms.
 assert.equal(fromRawg({ id: 2, name: 'Y', platforms: [{ platform: { name: 'PlayStation 5' } }] }).platform, 'PlayStation 5');
+
+// Steam: metacritic a 0-10 y % de reseñas positivas como nota de jugadores.
+assert.deepEqual(fromSteam({ metacritic: 90, positivo: 0.97, resenas: 1200, cover: 'x' }), { critic: 9, user: 9.7, cover: 'x' });
+// Con cuatro reseñas el porcentaje no significa nada: mejor sin nota.
+assert.equal(fromSteam({ metacritic: null, positivo: 1, resenas: 4 }).user, null);
+assert.equal(fromSteam({}).critic, null);
+
+// Pestañas por plataforma: las más numerosas primero y los huecos agrupados.
+const lib2 = [{ name: 'a', platform: 'Steam' }, { name: 'b', platform: 'Steam' }, { name: 'c', platform: 'GOG' }, { name: 'd', platform: null }];
+assert.deepEqual(platformIndex(lib2), [
+  { name: 'Steam', count: 2 },
+  { name: 'GOG', count: 1 },
+  { name: 'Sin plataforma', count: 1 },
+]);
+assert.equal(filterByPlatform(lib2, 'Steam').length, 2);
+assert.equal(filterByPlatform(lib2, 'Sin plataforma').length, 1);
+assert.equal(filterByPlatform(lib2, null).length, 4);
+
+// Portadas: se pide la versión pequeña, y solo una vez.
+assert.equal(thumb('https://media.rawg.io/media/games/x.jpg'), 'https://media.rawg.io/media/resize/420/-/games/x.jpg');
+assert.equal(thumb('https://media.rawg.io/media/resize/420/-/games/x.jpg'), 'https://media.rawg.io/media/resize/420/-/games/x.jpg');
+assert.equal(thumb(null), null);
+
+// Lista pegada: quita numeración, vacíos y repetidos.
+assert.deepEqual(parseList('1. Hollow Knight\n\n2) Celeste\n   \nHOLLOW KNIGHT\nHades'), ['Hollow Knight', 'Celeste', 'Hades']);
 // Sin votos de jugadores -> null, no 0.
 assert.equal(fromRawg({ id: 1, name: 'X', rating: 0, ratings_count: 0, playtime: 0 }).user, null);
 assert.equal(fromRawg({ id: 1, name: 'X', metacritic: null, playtime: 0 }).hours, null);

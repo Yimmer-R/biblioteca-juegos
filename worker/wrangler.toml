@@ -1,0 +1,6 @@
+name = "steam-proxy"
+main = "steam-proxy.js"
+compatibility_date = "2026-06-01"
+
+# La clave de Steam NO va aqui. Se guarda cifrada con:
+#   npx wrangler secret put STEAM_KEY

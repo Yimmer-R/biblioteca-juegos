@@ -18,33 +18,40 @@
 <div class="wrap">
 
   <header class="top">
-    <div class="brand">
+    <div class="bar">
       <span class="dot"></span>
       <h1>Calidad por hora</h1>
+      <button id="btn-account" class="account">Entrar</button>
+      <button id="btn-menu" class="icon-btn" aria-label="Menú" title="Menú">&#9776;</button>
     </div>
+
     <div class="stats" id="stats"></div>
+    <nav class="tabs" id="tabs" aria-label="Plataformas"></nav>
+
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Filtrar mi biblioteca..." autocomplete="off" enterkeyhint="search">
+      <select id="sort" aria-label="Ordenar por"></select>
+      <button class="icon-btn" id="btn-view" aria-label="Cambiar vista" title="Lista o carátulas">&#9638;</button>
+      <button class="primary" id="btn-add">+ Juego</button>
+    </div>
   </header>
 
-  <div class="toolbar">
-    <input type="search" id="q" placeholder="Filtrar mi biblioteca..." autocomplete="off" enterkeyhint="search">
-    <select id="sort" aria-label="Ordenar por"></select>
-    <button class="primary" id="btn-add">+ Juego</button>
-    <button id="btn-menu" aria-label="Más opciones" title="Más opciones">&#8943;</button>
-  </div>
-
-  <main class="table" id="table">
-    <div class="row head" id="head">
-      <span data-sort="name">Juego</span>
-      <span data-sort="platform" class="plat">Plataforma</span>
-      <span data-sort="critic" class="num">Críticos</span>
-      <span data-sort="user" class="num">Jugadores</span>
-      <span data-sort="avg" class="num">Promedio</span>
-      <span data-sort="hours" class="num">Horas</span>
-      <span data-sort="qph" class="num">Cal./hora</span>
+  <main>
+    <div class="table" id="table">
+      <div class="row head" id="head">
+        <span data-sort="name">Juego</span>
+        <span data-sort="platform" class="plat">Plataforma</span>
+        <span data-sort="critic" class="num">Críticos</span>
+        <span data-sort="user" class="num">Jugadores</span>
+        <span data-sort="avg" class="num">Promedio</span>
+        <span data-sort="hours" class="num">Horas</span>
+        <span data-sort="qph" class="num">Cal./hora</span>
+      </div>
+      <div id="rows"></div>
     </div>
-    <div id="rows"></div>
+    <div class="grid" id="grid" hidden></div>
+    <p class="hint" id="hint" hidden></p>
   </main>
-  <p class="hint" id="hint" hidden></p>
 
 </div>
 
@@ -67,8 +74,10 @@
     <button class="ghost" data-close aria-label="Cerrar">&times;</button>
   </div>
   <div class="dlg-body">
+    <img id="edit-cover" class="edit-cover" alt="" hidden>
     <label class="field"><span>Nombre</span><input type="text" id="f-name"></label>
-    <label class="field"><span>Plataforma o tienda (Steam, Epic, GOG, PS5, Switch, Android...)</span><input type="text" id="f-platform"></label>
+    <label class="field"><span>Plataforma donde lo tienes (Steam, Epic, GOG, PS5, Switch, Android...)</span><input type="text" id="f-platform" list="platform-list"></label>
+    <datalist id="platform-list"></datalist>
     <div class="grid-3">
       <label class="field"><span>Críticos</span><input type="text" id="f-critic" inputmode="decimal" placeholder="0-10"></label>
       <label class="field"><span>Jugadores</span><input type="text" id="f-user" inputmode="decimal" placeholder="0-10"></label>
@@ -84,18 +93,80 @@
   </div>
 </dialog>
 
-<!-- menu de opciones -->
+<!-- menú -->
 <dialog id="dlg-menu">
   <div class="dlg-head">
-    <h2>Opciones</h2>
+    <h2>Menú</h2>
     <button class="ghost" data-close aria-label="Cerrar">&times;</button>
   </div>
   <div class="dlg-body menu-list">
-    <button id="m-key">Clave de RAWG<small id="m-key-state"></small></button>
+    <button id="m-account">Cuenta<small id="m-account-state"></small></button>
+    <button id="m-steam">Conectar con Steam<small id="m-steam-state"></small></button>
+    <button id="m-paste">Importar lista de juegos<small>Pega los nombres de tu biblioteca de Epic, GOG, consola o móvil</small></button>
     <button id="m-fill">Completar datos que faltan<small id="m-fill-state"></small></button>
-    <button id="m-csv">Exportar a Excel (CSV)<small>Mismas columnas que tu steam_juegos.xlsx</small></button>
-    <button id="m-json">Guardar copia (JSON)<small>Para pasar la biblioteca a otro dispositivo</small></button>
+    <button id="m-key">Clave de RAWG<small id="m-key-state"></small></button>
+    <button id="m-csv">Exportar a Excel (CSV)<small>Una fila por juego, con todas las columnas</small></button>
+    <button id="m-json">Guardar copia (JSON)<small>Copia de seguridad de toda la biblioteca</small></button>
     <button id="m-import">Restaurar copia (JSON)<small>Sustituye la biblioteca actual</small></button>
+  </div>
+</dialog>
+
+<!-- cuenta -->
+<dialog id="dlg-account">
+  <div class="dlg-head">
+    <h2>Tu cuenta</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body">
+    <div id="account-body"></div>
+    <p class="note" id="account-note"></p>
+  </div>
+  <div class="dlg-foot">
+    <button class="danger spacer" id="btn-signout" hidden>Cerrar sesión</button>
+    <button class="primary" id="btn-signin">Entrar con Google</button>
+  </div>
+</dialog>
+
+<!-- conectar steam -->
+<dialog id="dlg-steam">
+  <div class="dlg-head">
+    <h2>Conectar con Steam</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body">
+    <label class="field">
+      <span>Tu perfil de Steam (el enlace completo o tu nombre de usuario)</span>
+      <input type="text" id="f-steam" autocomplete="off" placeholder="https://steamcommunity.com/id/tunombre">
+    </label>
+    <p class="note" id="steam-note">Tu perfil y los detalles del juego deben estar en <b>público</b> para que Steam deje leer la lista.</p>
+    <p class="qph-preview" id="steam-progress" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <button class="ghost" data-close>Cerrar</button>
+    <button class="primary" id="btn-steam-go">Traer mi biblioteca</button>
+  </div>
+</dialog>
+
+<!-- importar pegando una lista -->
+<dialog id="dlg-paste">
+  <div class="dlg-head">
+    <h2>Importar lista de juegos</h2>
+    <button class="ghost" data-close aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="dlg-body">
+    <label class="field">
+      <span>Un juego por línea. Sirve cualquier plataforma: Epic, GOG, PlayStation, Switch, Android...</span>
+      <textarea id="f-paste" rows="8" placeholder="Hollow Knight&#10;Celeste&#10;Hades"></textarea>
+    </label>
+    <label class="field">
+      <span>Plataforma para todos (opcional)</span>
+      <input type="text" id="f-paste-plat" placeholder="Epic Games">
+    </label>
+    <p class="qph-preview" id="paste-progress" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <button class="ghost" id="btn-paste-stop">Cerrar</button>
+    <button class="primary" id="btn-paste-go">Importar</button>
   </div>
 </dialog>
 
@@ -112,8 +183,8 @@
     </label>
     <p class="note">
       Es gratis: entra en <a href="https://rawg.io/apidocs" target="_blank" rel="noopener">rawg.io/apidocs</a>,
-      crea una cuenta y copia la "API key". Sirve para las notas de críticos (Metacritic), las notas de jugadores
-      y la duración media. Se guarda solo en este dispositivo.
+      crea una cuenta y copia la "API key". Sirve para las notas de críticos (Metacritic), las notas de jugadores,
+      la duración media y las carátulas. Se guarda solo en este dispositivo.
     </p>
   </div>
   <div class="dlg-foot">

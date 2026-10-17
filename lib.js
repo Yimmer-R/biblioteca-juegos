@@ -47,12 +47,24 @@ export function fromRawg(g) {
     rawgId: g.id,
     name: g.name,
     year: g.released ? Number(g.released.slice(0, 4)) : null,
-    platform: platformsOf(g).join(', ') || null,
+    // Una biblioteca es personal: el juego esta en UNA plataforma, la tuya.
+    // El resto de tiendas donde se vende quedan en `store`, solo informativo.
+    platform: stores[0] || platformsOf(g)[0] || null,
     store: stores.join(', ') || null,
     critic: g.metacritic ? round2(g.metacritic / 10) : null,
     user: g.ratings_count ? round2(g.rating * 2) : null,
     hours: g.playtime ? round2(g.playtime) : null,
     cover: g.background_image || null,
+  };
+}
+
+// Steam: metacritic 0-100 y el % de resenas positivas, que es la nota de
+// jugadores de verdad del launcher. Menos de 30 resenas no dice nada.
+export function fromSteam(d) {
+  return {
+    critic: d.metacritic ? round2(d.metacritic / 10) : null,
+    user: d.positivo != null && d.resenas >= 30 ? round2(d.positivo * 10) : null,
+    cover: d.cover || null,
   };
 }
 
@@ -76,6 +88,44 @@ export function sortGames(games, key, dir) {
     if (bv == null) return -1;
     return (av - bv) * dir || a.name.localeCompare(b.name, 'es');
   });
+}
+
+// Pestanas de plataforma: las que mas juegos tienen primero.
+export function platformIndex(games) {
+  const counts = new Map();
+  for (const g of games) {
+    const name = (g.platform || 'Sin plataforma').trim() || 'Sin plataforma';
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'es'));
+}
+
+export function filterByPlatform(games, platform) {
+  if (!platform) return games;
+  return games.filter((g) => ((g.platform || 'Sin plataforma').trim() || 'Sin plataforma') === platform);
+}
+
+// Las portadas de RAWG vienen a 1920px; esta ruta sirve la version pequena.
+export function thumb(url) {
+  if (!url) return null;
+  return url.includes('/media/') && !url.includes('/media/resize/') ? url.replace('/media/', '/media/resize/420/-/') : url;
+}
+
+// Una lista pegada por el usuario: un juego por linea, sin numeracion ni vacios.
+export function parseList(text) {
+  const seen = new Set();
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^\s*[\d]+[.)\-\s]+/, '').trim())
+    .filter((line) => line.length > 1)
+    .filter((line) => {
+      const k = dedupeKey(line);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
 }
 
 export function filterGames(games, query) {

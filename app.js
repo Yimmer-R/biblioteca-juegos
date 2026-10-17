@@ -1,4 +1,9 @@
-import { SORTS, dedupeKey, filterGames, fromRawg, sortGames, stats, toCsv, toHours, toScore10, withDerived } from './lib.js';
+import {
+  SORTS, dedupeKey, filterByPlatform, filterGames, fromRawg, fromSteam, parseList, platformIndex,
+  sortGames, stats, thumb, toCsv, toHours, toScore10, withDerived,
+} from './lib.js';
+import { FIREBASE, STEAM_PROXY } from './config.js';
+import { signIn, signOut, watchAuth, pullOnce, push, watchRemote } from './sync.js';
 
 const STORE_KEY = 'calidad-por-hora/v1';
 const $ = (sel) => document.querySelector(sel);
@@ -7,7 +12,10 @@ const state = {
   games: [],
   sort: { key: 'qph', dir: -1 },
   query: '',
+  platform: null,
+  view: localStorage.getItem(STORE_KEY + '/vista') || 'lista',
   apiKey: localStorage.getItem(STORE_KEY + '/rawg') || '',
+  user: null,
 };
 
 /* ---------- almacenamiento ---------- */
@@ -22,11 +30,16 @@ function load() {
   return null;
 }
 
-function save() {
+let pushTimer = 0;
+function save({ sync = true } = {}) {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(state.games));
   } catch (e) {
     toast('No se pudo guardar: almacenamiento lleno');
+  }
+  if (sync && state.user) {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => push(state.user.uid, state.games).catch(() => toast('No se pudo sincronizar')), 1200);
   }
 }
 
@@ -39,13 +52,14 @@ async function boot() {
       const res = await fetch('data/seed.json');
       state.games = await res.json();
       localStorage.setItem(STORE_KEY + '/seeded', '1');
-      save();
+      save({ sync: false });
       toast(state.games.length + ' juegos importados de tu Excel');
     } catch (e) {
       state.games = [];
     }
   }
   render();
+  if (FIREBASE.apiKey) watchAuth(FIREBASE, onUser);
 }
 
 /* ---------- utilidades de presentacion ---------- */
@@ -57,9 +71,9 @@ const nf = (n, d) => (n == null ? '' : n.toLocaleString('es-ES', { maximumFracti
 
 const scoreClass = (n) => (n == null ? 'empty-val' : n >= 8 ? 'good' : n >= 6 ? 'mid' : 'low');
 
-function num(value, label, extra) {
+function num(value, label) {
   const txt = value == null ? '&mdash;' : esc(nf(value, 2));
-  return `<span class="cell num ${extra || ''} ${scoreClass(value)}" data-label="${label}">${txt}</span>`;
+  return `<span class="cell num ${scoreClass(value)}" data-label="${label}">${txt}</span>`;
 }
 
 function toast(msg) {
@@ -73,7 +87,13 @@ function toast(msg) {
   }, 2600);
 }
 
+const coverOf = (g) => thumb(g.cover) || (g.appid ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${g.appid}/header.jpg` : null);
+
 /* ---------- render ---------- */
+
+function visibleGames() {
+  return sortGames(filterGames(filterByPlatform(state.games, state.platform), state.query), state.sort.key, state.sort.dir);
+}
 
 function render() {
   const s = stats(state.games);
@@ -86,27 +106,54 @@ function render() {
     .map(([label, value]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`)
     .join('');
 
-  const visible = sortGames(filterGames(state.games, state.query), state.sort.key, state.sort.dir);
+  const plats = platformIndex(state.games);
+  $('#tabs').innerHTML =
+    `<button class="tab" data-plat="" aria-pressed="${!state.platform}"><b>Todas</b><span>${state.games.length}</span></button>` +
+    plats
+      .map(
+        (p) =>
+          `<button class="tab" data-plat="${esc(p.name)}" aria-pressed="${state.platform === p.name}"><b>${esc(p.name)}</b><span>${p.count}</span></button>`
+      )
+      .join('');
+  $('#platform-list').innerHTML = plats.map((p) => `<option value="${esc(p.name)}">`).join('');
 
-  $('#rows').innerHTML = visible
-    .map(
-      (g) => `<button class="row" data-id="${esc(g.id)}">
+  const visible = visibleGames();
+  const lista = state.view === 'lista';
+  $('#table').hidden = !lista || !visible.length;
+  $('#grid').hidden = lista || !visible.length;
+  $('#btn-view').innerHTML = lista ? '&#9638;' : '&#9776;';
+  $('#btn-view').title = lista ? 'Ver carátulas' : 'Ver lista';
+
+  if (lista) {
+    $('#rows').innerHTML = visible
+      .map(
+        (g) => `<button class="row" data-id="${esc(g.id)}">
         <span class="cell name">
-          ${g.cover ? `<img class="cover" src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="cover"></span>'}
+          ${coverOf(g) ? `<img class="cover" src="${esc(coverOf(g))}" alt="" loading="lazy">` : '<span class="cover"></span>'}
           <span class="name-text"><b>${esc(g.name)}</b>${g.year ? `<small>${g.year}</small>` : ''}</span>
         </span>
-        <span class="cell plat">${esc(g.store || g.platform || '')}</span>
+        <span class="cell plat">${esc(g.platform || '')}</span>
         ${num(g.critic, 'Críticos')}
         ${num(g.user, 'Jugadores')}
         ${num(g.avg, 'Promedio')}
         <span class="cell num ${g.hours ? '' : 'empty-val'}" data-label="Horas">${g.hours ? esc(nf(g.hours, 1)) : '&mdash;'}</span>
         <span class="cell num qph ${g.qph == null ? 'empty-val' : ''}" data-label="Calidad/hora"><b>${g.qph == null ? '&mdash;' : esc(nf(g.qph, 2))}</b></span>
       </button>`
-    )
-    .join('');
+      )
+      .join('');
+  } else {
+    $('#grid').innerHTML = visible
+      .map(
+        (g) => `<button class="card" data-id="${esc(g.id)}">
+        ${coverOf(g) ? `<img class="shot" src="${esc(coverOf(g))}" alt="" loading="lazy">` : '<span class="shot no-shot">SIN CARÁTULA</span>'}
+        <span class="badge">${g.qph == null ? '&mdash;' : esc(nf(g.qph, 2))}<small>CAL./HORA</small></span>
+        <span class="meta"><b>${esc(g.name)}</b><small>${esc(g.platform || 'Sin plataforma')}${g.hours ? ' &middot; ' + esc(nf(g.hours, 0)) + ' h' : ''}</small></span>
+      </button>`
+      )
+      .join('');
+  }
 
   const hint = $('#hint');
-  $('#table').hidden = visible.length === 0;
   hint.hidden = visible.length > 0;
   if (!visible.length) {
     hint.textContent = state.games.length
@@ -118,10 +165,30 @@ function render() {
     if (th.dataset.sort === state.sort.key) th.setAttribute('aria-sort', state.sort.dir === 1 ? 'ascending' : 'descending');
     else th.removeAttribute('aria-sort');
   }
+
   $('#m-fill-state').textContent = s.incomplete
     ? s.incomplete + ' juegos sin nota o sin duración'
     : 'Todos tus juegos tienen datos';
   $('#m-key-state').textContent = state.apiKey ? 'Configurada' : 'Sin configurar: la búsqueda automática no funciona';
+  $('#m-steam-state').textContent = STEAM_PROXY ? 'Trae tu biblioteca con tus horas jugadas' : 'Falta configurar el intermediario';
+  $('#m-account-state').textContent = state.user
+    ? 'Sincronizando como ' + state.user.email
+    : FIREBASE.apiKey
+      ? 'Entra con Google para verla en cualquier dispositivo'
+      : 'Falta configurar Firebase';
+  renderAccount();
+}
+
+function renderAccount() {
+  const btn = $('#btn-account');
+  if (state.user) {
+    const letra = (state.user.name || state.user.email || '?').trim()[0].toUpperCase();
+    btn.innerHTML = state.user.photo
+      ? `<img src="${esc(state.user.photo)}" alt=""><span>${esc((state.user.name || '').split(' ')[0] || 'Cuenta')}</span>`
+      : `<span class="avatar-letter">${esc(letra)}</span><span>${esc((state.user.name || '').split(' ')[0] || 'Cuenta')}</span>`;
+  } else {
+    btn.textContent = 'Entrar';
+  }
 }
 
 /* ---------- RAWG ---------- */
@@ -147,7 +214,7 @@ async function rawg(path, params) {
 
 const rawgError = (e) =>
   ({
-    SIN_CLAVE: 'Configura tu clave de RAWG en Opciones',
+    SIN_CLAVE: 'Configura tu clave de RAWG en el menú',
     CLAVE_INVALIDA: 'La clave de RAWG no es válida',
     SIN_RED: 'No se pudo conectar con RAWG: revisa tu clave o tu conexión',
     LIMITE: 'Demasiadas consultas: espera un momento',
@@ -162,6 +229,31 @@ async function detailRawg(id) {
   } catch (e) {
     return null;
   }
+}
+
+// Busca un juego por nombre y devuelve sus datos solo si el nombre coincide.
+async function lookup(name) {
+  const hit = (await searchRawg(name))[0];
+  if (!hit) return null;
+  const data = (await detailRawg(hit.id)) || fromRawg(hit);
+  return dedupeKey(data.name) === dedupeKey(name) ? data : { ...data, dudoso: true };
+}
+
+/* ---------- Steam ---------- */
+
+async function steam(path, params) {
+  if (!STEAM_PROXY) throw new Error('SIN_PROXY');
+  const url = new URL(STEAM_PROXY.replace(/\/$/, '') + path);
+  for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    throw new Error('SIN_RED');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'ERROR_' + res.status);
+  return data;
 }
 
 /* ---------- añadir ---------- */
@@ -181,7 +273,7 @@ function openAdd() {
 
 async function runSearch(q) {
   const seq = ++searchSeq;
-  const manual = `<button class="result" data-manual="1"><span class="cover"></span><span class="meta"><b>Añadir "${esc(q)}" a mano</b><small>Tu escribes las notas y las horas</small></span></button>`;
+  const manual = `<button class="result" data-manual="1"><span class="cover"></span><span class="meta"><b>Añadir "${esc(q)}" a mano</b><small>Tú escribes las notas y las horas</small></span></button>`;
   if (!state.apiKey) {
     $('#results').innerHTML = manual;
     return;
@@ -189,14 +281,14 @@ async function runSearch(q) {
   $('#results').innerHTML = '<p class="hint">Buscando...</p>';
   try {
     const results = await searchRawg(q);
-    if (seq !== searchSeq) return; // una búsqueda más nueva ya respondio
+    if (seq !== searchSeq) return; // una busqueda mas nueva ya respondio
     $('#results').innerHTML =
       results
         .map(fromRawg)
         .map(
           (g) => `<button class="result" data-rawg="${g.rawgId}">
-            ${g.cover ? `<img class="cover" src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="cover"></span>'}
-            <span class="meta"><b>${esc(g.name)}</b><small>${esc([g.year, g.store || g.platform].filter(Boolean).join(' &middot; ')) || 'Sin plataforma'}</small></span>
+            ${g.cover ? `<img class="cover" src="${esc(thumb(g.cover))}" alt="" loading="lazy">` : '<span class="cover"></span>'}
+            <span class="meta"><b>${esc(g.name)}</b><small>${esc([g.year, g.platform].filter(Boolean).join(' · ')) || 'Sin plataforma'}</small></span>
             <span class="nums">${g.critic == null ? 'sin nota' : 'crit. ' + nf(g.critic, 1)}<br>${g.hours ? nf(g.hours, 0) + ' h' : 'sin duración'}</span>
           </button>`
         )
@@ -231,7 +323,7 @@ $('#results').addEventListener('click', async (e) => {
   if (!btn) return;
   if (btn.dataset.manual) {
     dlgAdd.close();
-    openEdit({ id: 'man-' + Date.now(), name: $('#search').value.trim(), platform: null, store: null, critic: null, user: null, hours: null, cover: null, rawgId: null }, true);
+    openEdit({ id: 'man-' + Date.now(), name: $('#search').value.trim(), platform: null, critic: null, user: null, hours: null, cover: null, rawgId: null }, true);
     return;
   }
   btn.disabled = true;
@@ -245,8 +337,7 @@ $('#results').addEventListener('click', async (e) => {
 });
 
 function addGame(game) {
-  const dup = state.games.find((g) => dedupeKey(g.name) === dedupeKey(game.name));
-  if (dup) {
+  if (state.games.some((g) => dedupeKey(g.name) === dedupeKey(game.name))) {
     toast(game.name + ' ya está en tu biblioteca');
     return;
   }
@@ -267,13 +358,22 @@ function openEdit(game, isNew) {
   editing = game;
   editingIsNew = !!isNew;
   $('#edit-title').textContent = isNew ? 'Añadir a mano' : 'Editar juego';
+  const cover = coverOf(game);
+  $('#edit-cover').hidden = !cover;
+  if (cover) $('#edit-cover').src = cover;
   $('#f-name').value = game.name || '';
-  $('#f-platform').value = game.store || game.platform || '';
+  $('#f-platform').value = game.platform || '';
   $('#f-critic').value = game.critic == null ? '' : String(game.critic).replace('.', ',');
   $('#f-user').value = game.user == null ? '' : String(game.user).replace('.', ',');
   $('#f-hours').value = game.hours == null ? '' : String(game.hours).replace('.', ',');
   $('#btn-delete').hidden = !!isNew;
-  $('#edit-source').textContent = game.rawgId ? 'Datos de RAWG (críticos = Metacritic, jugadores = notas de usuarios).' : '';
+  $('#edit-source').textContent = [
+    game.rawgId ? 'Datos de RAWG (críticos = Metacritic).' : '',
+    game.appid ? 'Juego de Steam (' + game.appid + ').' : '',
+    game.store && game.store !== game.platform ? 'También se vende en: ' + game.store + '.' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   updatePreview();
   dlgEdit.showModal();
 }
@@ -305,7 +405,7 @@ $('#btn-save').addEventListener('click', () => {
     toast('Ponle un nombre al juego');
     return;
   }
-  const updated = { ...editing, ...f, store: f.platform };
+  const updated = { ...editing, ...f };
   if (editingIsNew) {
     if (state.games.some((g) => dedupeKey(g.name) === dedupeKey(f.name))) {
       toast(f.name + ' ya está en tu biblioteca');
@@ -335,19 +435,20 @@ $('#btn-refetch').addEventListener('click', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Buscando...';
   try {
-    const name = $('#f-name').value.trim() || editing.name;
-    const hit = (await searchRawg(name))[0];
-    const data = hit ? (await detailRawg(hit.id)) || fromRawg(hit) : null;
+    const data = await lookup($('#f-name').value.trim() || editing.name);
     if (!data) {
       toast('RAWG no tiene ese juego');
     } else {
-      // Nunca borra lo que ya tenías: solo escribe lo que RAWG si conoce.
+      // Nunca borra lo que ya tenias: solo escribe lo que RAWG si conoce.
       if (data.critic != null) $('#f-critic').value = String(data.critic).replace('.', ',');
       if (data.user != null) $('#f-user').value = String(data.user).replace('.', ',');
       if (data.hours != null) $('#f-hours').value = String(data.hours).replace('.', ',');
-      if (data.store || data.platform) $('#f-platform').value = data.store || data.platform;
-      editing = { ...editing, rawgId: data.rawgId, cover: editing.cover || data.cover, year: data.year };
-      $('#edit-source').textContent = 'Datos de RAWG para "' + data.name + '".';
+      if (!$('#f-platform').value.trim() && data.platform) $('#f-platform').value = data.platform;
+      editing = { ...editing, rawgId: data.rawgId, cover: editing.cover || data.cover, year: data.year, store: data.store };
+      const cover = coverOf(editing);
+      $('#edit-cover').hidden = !cover;
+      if (cover) $('#edit-cover').src = cover;
+      $('#edit-source').textContent = 'Datos de RAWG para "' + data.name + '".' + (data.dudoso ? ' Ojo: el nombre no coincide exacto.' : '');
       updatePreview();
       toast('Datos actualizados: revisa y guarda');
     }
@@ -358,14 +459,35 @@ $('#btn-refetch').addEventListener('click', async (e) => {
   btn.textContent = 'Buscar datos';
 });
 
+function openById(id) {
+  const game = state.games.find((g) => String(g.id) === id);
+  if (game) openEdit(game, false);
+}
+
 $('#rows').addEventListener('click', (e) => {
   const row = e.target.closest('.row');
-  if (!row) return;
-  const game = state.games.find((g) => String(g.id) === row.dataset.id);
-  if (game) openEdit(game, false);
+  if (row) openById(row.dataset.id);
 });
 
-/* ---------- orden y filtro ---------- */
+$('#grid').addEventListener('click', (e) => {
+  const card = e.target.closest('.card');
+  if (card) openById(card.dataset.id);
+});
+
+/* ---------- pestañas, vista, orden y filtro ---------- */
+
+$('#tabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  state.platform = tab.dataset.plat || null;
+  render();
+});
+
+$('#btn-view').addEventListener('click', () => {
+  state.view = state.view === 'lista' ? 'caratulas' : 'lista';
+  localStorage.setItem(STORE_KEY + '/vista', state.view);
+  render();
+});
 
 $('#sort').innerHTML = Object.entries(SORTS)
   .map(([k, label]) => `<option value="${k}">${label}</option>`)
@@ -381,7 +503,7 @@ $('#head').addEventListener('click', (e) => {
   const key = e.target.dataset.sort;
   if (!key) return;
   state.sort = state.sort.key === key ? { key, dir: -state.sort.dir } : { key, dir: key === 'name' ? 1 : -1 };
-  $('#sort').value = key in SORTS ? key : $('#sort').value;
+  if (key in SORTS) $('#sort').value = key;
   render();
 });
 
@@ -390,7 +512,7 @@ $('#q').addEventListener('input', (e) => {
   render();
 });
 
-/* ---------- menu, clave, exportar, importar ---------- */
+/* ---------- menu ---------- */
 
 $('#btn-add').addEventListener('click', openAdd);
 $('#btn-menu').addEventListener('click', () => $('#dlg-menu').showModal());
@@ -414,6 +536,12 @@ $('#btn-key-save').addEventListener('click', async (e) => {
     $('#dlg-key').close();
     toast('Clave borrada');
     return;
+  }
+  // Una clave de RAWG son 32 caracteres hexadecimales. El fallo mas comun es
+  // copiarla a medias, y como RAWG contesta 401 sin cabeceras CORS, el
+  // navegador lo ensena como "error de red" y no se entiende nada.
+  if (!/^[0-9a-f]{32}$/i.test(state.apiKey)) {
+    toast(`Esa clave tiene ${state.apiKey.length} caracteres y deberían ser 32: cópiala entera`);
   }
   // Se prueba al guardar: si la clave esta mal, el navegador solo ve un fallo
   // de red, asi que mejor avisar aqui que dejar la busqueda muda.
@@ -471,9 +599,146 @@ $('#file').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 
+/* ---------- importar pegando una lista ---------- */
+
+let importing = false;
+
+$('#m-paste').addEventListener('click', () => {
+  $('#dlg-menu').close();
+  $('#f-paste').value = '';
+  $('#paste-progress').hidden = true;
+  $('#btn-paste-go').textContent = 'Importar';
+  $('#dlg-paste').showModal();
+});
+
+$('#btn-paste-stop').addEventListener('click', () => {
+  importing = false;
+  $('#dlg-paste').close();
+});
+
+$('#btn-paste-go').addEventListener('click', async (e) => {
+  if (importing) {
+    importing = false;
+    return;
+  }
+  const nombres = parseList($('#f-paste').value);
+  if (!nombres.length) {
+    toast('Pega al menos un nombre');
+    return;
+  }
+  const plataforma = $('#f-paste-plat').value.trim() || null;
+  const btn = e.currentTarget;
+  const prog = $('#paste-progress');
+  prog.hidden = false;
+  importing = true;
+  btn.textContent = 'Detener';
+  let nuevos = 0;
+  let repetidos = 0;
+  for (const [i, nombre] of nombres.entries()) {
+    if (!importing) break;
+    prog.textContent = `${i + 1} de ${nombres.length}: ${nombre}`;
+    if (state.games.some((g) => dedupeKey(g.name) === dedupeKey(nombre))) {
+      repetidos++;
+      continue;
+    }
+    let datos = null;
+    if (state.apiKey) {
+      try {
+        datos = await lookup(nombre);
+      } catch (err) {
+        prog.textContent = rawgError(err);
+        break;
+      }
+    }
+    const juego = datos && !datos.dudoso
+      ? { ...datos, platform: plataforma || datos.platform }
+      : { id: 'lista-' + Date.now() + '-' + i, name: nombre, platform: plataforma, critic: null, user: null, hours: null, cover: null, rawgId: null };
+    state.games.push(juego);
+    nuevos++;
+    if (nuevos % 5 === 0) save({ sync: false });
+    if (state.apiKey) await new Promise((r) => setTimeout(r, 250)); // no castigar la API gratuita
+  }
+  importing = false;
+  save();
+  render();
+  btn.textContent = 'Importar';
+  prog.textContent = `Listo: ${nuevos} juegos añadidos${repetidos ? ', ' + repetidos + ' ya los tenías' : ''}.`;
+  toast(nuevos + ' juegos añadidos');
+});
+
+/* ---------- conectar con Steam ---------- */
+
+$('#m-steam').addEventListener('click', () => {
+  $('#dlg-menu').close();
+  if (!STEAM_PROXY) {
+    toast('Falta configurar el intermediario de Steam');
+    return;
+  }
+  $('#steam-progress').hidden = true;
+  $('#dlg-steam').showModal();
+});
+
+// Acepta el enlace completo del perfil, el /id/nombre o el nombre a secas.
+function parseSteamProfile(raw) {
+  const txt = raw.trim();
+  const porId = txt.match(/profiles\/(\d{17})/) || txt.match(/^(\d{17})$/);
+  if (porId) return { steamid: porId[1] };
+  const porNombre = txt.match(/\/id\/([^/?#]+)/) || txt.match(/^([A-Za-z0-9_-]{2,64})$/);
+  return porNombre ? { vanity: porNombre[1] } : null;
+}
+
+$('#btn-steam-go').addEventListener('click', async (e) => {
+  const perfil = parseSteamProfile($('#f-steam').value);
+  if (!perfil) {
+    toast('Pega el enlace de tu perfil de Steam');
+    return;
+  }
+  const btn = e.currentTarget;
+  const prog = $('#steam-progress');
+  prog.hidden = false;
+  prog.textContent = 'Pidiendo tu biblioteca a Steam...';
+  btn.disabled = true;
+  try {
+    const data = await steam('/biblioteca', perfil);
+    const juegos = data.games || [];
+    let nuevos = 0;
+    for (const j of juegos) {
+      if (state.games.some((g) => g.appid === j.appid || dedupeKey(g.name) === dedupeKey(j.name))) continue;
+      state.games.push({
+        id: 'steam-' + j.appid,
+        appid: j.appid,
+        name: j.name,
+        platform: 'Steam',
+        critic: null,
+        user: null,
+        hours: null,
+        jugadas: j.playtime_forever ? Math.round((j.playtime_forever / 60) * 10) / 10 : null,
+        cover: null,
+        rawgId: null,
+      });
+      nuevos++;
+    }
+    save();
+    render();
+    prog.textContent = `${juegos.length} juegos en tu cuenta de Steam, ${nuevos} nuevos. Ahora usa "Completar datos que faltan" para las notas y la duración.`;
+    toast(nuevos + ' juegos traídos de Steam');
+  } catch (err) {
+    prog.textContent =
+      err.message === 'SIN_RED'
+        ? 'No se pudo hablar con el intermediario'
+        : err.message === 'perfil_privado'
+          ? 'Tu perfil de Steam está en privado: cambia "Detalles del juego" a Público'
+          : err.message === 'no_encontrado'
+            ? 'No encuentro ese perfil de Steam'
+            : 'Steam no respondió (' + err.message + ')';
+  }
+  btn.disabled = false;
+});
+
 /* ---------- completar datos que faltan ---------- */
 
 let filling = false;
+const needsData = (g) => g.critic == null || g.user == null || !g.hours;
 
 $('#m-fill').addEventListener('click', () => {
   $('#dlg-menu').close();
@@ -485,8 +750,6 @@ $('#m-fill').addEventListener('click', () => {
   $('#btn-fill-start').textContent = 'Empezar';
   $('#dlg-fill').showModal();
 });
-
-const needsData = (g) => g.critic == null || g.user == null || !g.hours;
 
 $('#btn-fill-stop').addEventListener('click', () => {
   filling = false;
@@ -511,19 +774,31 @@ $('#btn-fill-start').addEventListener('click', async () => {
   for (const game of pending) {
     if (!filling) break;
     $('#fill-text').textContent = `${done + 1} de ${pending.length}: ${game.name}`;
+    // Para un juego de Steam, Steam es mejor fuente que RAWG: su % de resenas
+    // es la nota de jugadores real del launcher. Si falla, seguimos con RAWG.
+    if (game.appid && STEAM_PROXY) {
+      try {
+        const s = fromSteam(await steam('/juego', { appid: game.appid }));
+        if (game.critic == null && s.critic != null) game.critic = s.critic;
+        if (game.user == null && s.user != null) game.user = s.user;
+        if (!game.cover && s.cover) game.cover = s.cover;
+        if (!needsData(game)) found++;
+        await new Promise((r) => setTimeout(r, 400)); // Steam limita las consultas
+      } catch (e) {
+        /* sin Steam, lo intenta RAWG */
+      }
+    }
     try {
-      const hit = (await searchRawg(game.name))[0];
-      const data = hit ? (await detailRawg(hit.id)) || fromRawg(hit) : null;
-      if (data && dedupeKey(data.name) === dedupeKey(game.name)) {
+      const data = needsData(game) ? await lookup(game.name) : null;
+      if (data && !data.dudoso) {
         const patch = {};
         if (game.critic == null && data.critic != null) patch.critic = data.critic;
         if (game.user == null && data.user != null) patch.user = data.user;
         if (!game.hours && data.hours) patch.hours = data.hours;
         if (!game.cover && data.cover) patch.cover = data.cover;
         if (!game.platform && data.platform) patch.platform = data.platform;
-        if (!game.store && data.store) patch.store = data.store;
         if (Object.keys(patch).length) {
-          Object.assign(game, patch, { rawgId: data.rawgId, year: game.year || data.year });
+          Object.assign(game, patch, { rawgId: data.rawgId, year: game.year || data.year, store: game.store || data.store });
           found++;
         }
       }
@@ -532,7 +807,7 @@ $('#btn-fill-start').addEventListener('click', async () => {
       break;
     }
     done++;
-    if (done % 10 === 0) save();
+    if (done % 10 === 0) save({ sync: false });
     await new Promise((r) => setTimeout(r, 250)); // no castigar la API gratuita
   }
   filling = false;
@@ -543,6 +818,90 @@ $('#btn-fill-start').addEventListener('click', async () => {
   $('#fill-text').textContent = `Listo: ${found} de ${pending.length} juegos completados.`;
   toast(found + ' juegos completados');
 });
+
+/* ---------- cuenta y sincronizacion ---------- */
+
+function openAccount() {
+  const body = $('#account-body');
+  if (!FIREBASE.apiKey) {
+    body.innerHTML = '<p class="hint" style="padding:8px 0">Esta copia de la app todavía no tiene Firebase configurado, así que no hay sincronización.</p>';
+    $('#btn-signin').hidden = true;
+    $('#btn-signout').hidden = true;
+  } else if (state.user) {
+    body.innerHTML = `<p style="margin:0 0 6px"><b>${esc(state.user.name || state.user.email)}</b></p><p class="note" style="margin:0">${esc(state.user.email)}</p>`;
+    $('#account-note').textContent = 'Tu biblioteca se guarda en tu cuenta y se actualiza sola en todos tus dispositivos. Gana siempre el último cambio.';
+    $('#btn-signin').hidden = true;
+    $('#btn-signout').hidden = false;
+  } else {
+    body.innerHTML = '<p class="hint" style="padding:8px 0">Entra con tu cuenta de Google para tener la misma biblioteca en el móvil y en el ordenador.</p>';
+    $('#account-note').textContent = 'Solo se guardan tus juegos y tu correo. Nadie más puede leerlos.';
+    $('#btn-signin').hidden = false;
+    $('#btn-signout').hidden = true;
+  }
+  $('#dlg-account').showModal();
+}
+
+$('#btn-account').addEventListener('click', openAccount);
+$('#m-account').addEventListener('click', () => {
+  $('#dlg-menu').close();
+  openAccount();
+});
+
+$('#btn-signin').addEventListener('click', async (e) => {
+  e.currentTarget.disabled = true;
+  try {
+    await signIn(FIREBASE);
+  } catch (err) {
+    toast('No se pudo entrar: ' + err.message);
+  }
+  e.currentTarget.disabled = false;
+});
+
+$('#btn-signout').addEventListener('click', async () => {
+  await signOut();
+  $('#dlg-account').close();
+  toast('Sesión cerrada: la biblioteca sigue en este dispositivo');
+});
+
+let unwatchRemote = null;
+
+async function onUser(user) {
+  state.user = user;
+  render();
+  if (unwatchRemote) {
+    unwatchRemote();
+    unwatchRemote = null;
+  }
+  if (!user) return;
+  $('#dlg-account').close();
+  try {
+    const remoto = await pullOnce(user.uid);
+    if (!remoto) {
+      await push(user.uid, state.games);
+      toast('Biblioteca subida a tu cuenta');
+    } else if (JSON.stringify(remoto) !== JSON.stringify(state.games)) {
+      const usarNube = confirm(
+        `Tu cuenta tiene ${remoto.length} juegos guardados y este dispositivo tiene ${state.games.length}.\n\nAceptar = usar los de tu cuenta.\nCancelar = subir los de este dispositivo.`
+      );
+      if (usarNube) {
+        state.games = remoto;
+        save({ sync: false });
+      } else {
+        await push(user.uid, state.games);
+      }
+      render();
+    }
+    unwatchRemote = watchRemote(user.uid, (juegos) => {
+      if (JSON.stringify(juegos) === JSON.stringify(state.games)) return;
+      state.games = juegos;
+      save({ sync: false });
+      render();
+      toast('Biblioteca actualizada desde tu cuenta');
+    });
+  } catch (err) {
+    toast('No se pudo sincronizar: ' + err.message);
+  }
+}
 
 /* ---------- arranque ---------- */
 
