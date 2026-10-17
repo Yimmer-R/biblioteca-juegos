@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.yimmerr.calidadporhora",
+      "sha256_cert_fingerprints": [
+        "E2:70:CA:E5:81:BA:F0:F8:35:A6:0B:16:AC:18:F8:7A:5E:28:3A:26:7B:D1:3F:37:38:2C:31:3B:57:67:6D:8B"
+      ]
+    }
+  }
+]

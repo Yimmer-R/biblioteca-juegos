@@ -1,0 +1,21 @@
+// Reglas de seguridad de Firestore.
+//
+// Pegar en: consola de Firebase -> Firestore Database -> Reglas -> Publicar.
+//
+// Cada biblioteca vive en bibliotecas/{uid} y solo la puede leer y escribir
+// la persona que ha iniciado sesion con ese uid. Nadie mas, ni siquiera otro
+// usuario con sesion iniciada.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /bibliotecas/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Todo lo demas, cerrado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
